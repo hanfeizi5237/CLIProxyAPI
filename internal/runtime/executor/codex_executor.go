@@ -147,6 +147,9 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 	if opts.Alt == "responses/compact" {
 		return e.executeCompact(ctx, auth, req, opts)
 	}
+	if e.codexRequestMode(auth) == "chat" {
+		return e.executeChatMode(ctx, auth, req, opts)
+	}
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 
 	apiKey, baseURL := codexCreds(auth)
@@ -302,6 +305,9 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 }
 
 func (e *CodexExecutor) executeCompact(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
+	if e.codexRequestMode(auth) == "chat" {
+		return resp, statusErr{code: http.StatusBadRequest, msg: "request-mode=chat does not support /responses/compact upstream routing"}
+	}
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 
 	apiKey, baseURL := codexCreds(auth)
@@ -396,6 +402,9 @@ func (e *CodexExecutor) executeCompact(ctx context.Context, auth *cliproxyauth.A
 func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
 	if opts.Alt == "responses/compact" {
 		return nil, statusErr{code: http.StatusBadRequest, msg: "streaming not supported for /responses/compact"}
+	}
+	if e.codexRequestMode(auth) == "chat" {
+		return e.executeChatModeStream(ctx, auth, req, opts)
 	}
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 
@@ -535,6 +544,9 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 }
 
 func (e *CodexExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	if e.codexRequestMode(auth) == "chat" {
+		return e.countTokensChatMode(ctx, auth, req, opts)
+	}
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 
 	from := opts.SourceFormat
@@ -567,6 +579,42 @@ func (e *CodexExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Auth
 	usageJSON := fmt.Sprintf(`{"response":{"usage":{"input_tokens":%d,"output_tokens":0,"total_tokens":%d}}}`, count, count)
 	translated := sdktranslator.TranslateTokenCount(ctx, to, from, count, []byte(usageJSON))
 	return cliproxyexecutor.Response{Payload: translated}, nil
+}
+
+func (e *CodexExecutor) executeChatMode(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	if opts.SourceFormat == sdktranslator.FromString("codex") {
+		return cliproxyexecutor.Response{}, statusErr{code: http.StatusBadRequest, msg: "request-mode=chat does not support codex downstream format; use OpenAI /v1/chat/completions or /v1/responses"}
+	}
+	compat := NewOpenAICompatExecutor(e.Identifier(), e.cfg)
+	return compat.Execute(ctx, auth, req, opts)
+}
+
+func (e *CodexExecutor) executeChatModeStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+	if opts.SourceFormat == sdktranslator.FromString("codex") {
+		return nil, statusErr{code: http.StatusBadRequest, msg: "request-mode=chat does not support codex downstream format; use OpenAI /v1/chat/completions or /v1/responses"}
+	}
+	compat := NewOpenAICompatExecutor(e.Identifier(), e.cfg)
+	return compat.ExecuteStream(ctx, auth, req, opts)
+}
+
+func (e *CodexExecutor) countTokensChatMode(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	if opts.SourceFormat == sdktranslator.FromString("codex") {
+		return cliproxyexecutor.Response{}, statusErr{code: http.StatusBadRequest, msg: "request-mode=chat does not support codex downstream format for token counting"}
+	}
+	compat := NewOpenAICompatExecutor(e.Identifier(), e.cfg)
+	return compat.CountTokens(ctx, auth, req, opts)
+}
+
+func (e *CodexExecutor) codexRequestMode(auth *cliproxyauth.Auth) string {
+	if auth != nil && auth.Attributes != nil {
+		if mode := config.NormalizeCodexRequestMode(auth.Attributes["request_mode"]); mode != "responses" || strings.TrimSpace(auth.Attributes["request_mode"]) != "" {
+			return mode
+		}
+	}
+	if resolved := e.resolveCodexConfig(auth); resolved != nil {
+		return config.NormalizeCodexRequestMode(resolved.RequestMode)
+	}
+	return "responses"
 }
 
 func tokenizerForCodexModel(model string) (tokenizer.Codec, error) {

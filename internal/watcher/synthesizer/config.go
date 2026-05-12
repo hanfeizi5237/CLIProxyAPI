@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/watcher/diff"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
@@ -179,6 +180,9 @@ func (s *ConfigSynthesizer) synthesizeCodexKeys(ctx *SynthesisContext) []*coreau
 		}
 		if ck.BaseURL != "" {
 			attrs["base_url"] = ck.BaseURL
+		}
+		if mode := config.NormalizeCodexRequestMode(ck.RequestMode); mode != "responses" {
+			attrs["request_mode"] = mode
 		}
 		if ck.Websockets {
 			attrs["websockets"] = "true"

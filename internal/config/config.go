@@ -431,6 +431,12 @@ type CodexKey struct {
 	// APIKey is the authentication key for accessing Codex API services.
 	APIKey string `yaml:"api-key" json:"api-key"`
 
+	// RequestMode controls which upstream protocol to use for this credential.
+	// Supported values: "responses" (default) and "chat".
+	// - responses: route to the upstream /responses API using Codex translations.
+	// - chat: route to the upstream /chat/completions API using OpenAI chat translations.
+	RequestMode string `yaml:"request-mode,omitempty" json:"request-mode,omitempty"`
+
 	// Priority controls selection preference when multiple credentials match.
 	// Higher values are preferred; defaults to 0.
 	Priority int `yaml:"priority,omitempty" json:"priority,omitempty"`
@@ -898,6 +904,7 @@ func (cfg *Config) SanitizeCodexKeys() {
 		e := cfg.CodexKey[i]
 		e.Prefix = normalizeModelPrefix(e.Prefix)
 		e.BaseURL = strings.TrimSpace(e.BaseURL)
+		e.RequestMode = NormalizeCodexRequestMode(e.RequestMode)
 		e.Headers = NormalizeHeaders(e.Headers)
 		e.ExcludedModels = NormalizeExcludedModels(e.ExcludedModels)
 		if e.BaseURL == "" {
@@ -966,6 +973,19 @@ func normalizeModelPrefix(prefix string) string {
 // looksLikeBcrypt returns true if the provided string appears to be a bcrypt hash.
 func looksLikeBcrypt(s string) bool {
 	return len(s) > 4 && (s[:4] == "$2a$" || s[:4] == "$2b$" || s[:4] == "$2y$")
+}
+
+// NormalizeCodexRequestMode trims and validates the Codex request mode.
+// Empty or unknown values fall back to "responses".
+func NormalizeCodexRequestMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "responses":
+		return "responses"
+	case "chat":
+		return "chat"
+	default:
+		return "responses"
+	}
 }
 
 // NormalizeHeaders trims header keys and values and removes empty pairs.
