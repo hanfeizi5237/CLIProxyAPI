@@ -69,6 +69,50 @@ func TestCodexExecutorChatModeRoutesOpenAIChatToChatCompletions(t *testing.T) {
 	}
 }
 
+func TestCodexExecutorChatModeResolvesConfigModelAlias(t *testing.T) {
+	var gotBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotBody = body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl_1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		CodexKey: []config.CodexKey{
+			{
+				APIKey:      "test-key",
+				BaseURL:     server.URL + "/v1",
+				RequestMode: "chat",
+				Models: []config.CodexModel{
+					{Name: "qwen3.6-plus", Alias: "gpt-5.4"},
+				},
+			},
+		},
+	}
+	exec := NewCodexExecutor(cfg)
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"request_mode": "chat",
+		"base_url":     server.URL + "/v1",
+		"api_key":      "test-key",
+	}}
+	payload := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hi"}],"stream":false}`)
+	_, err := exec.Execute(context.Background(), auth, cliproxyexecutor.Request{
+		Model:   "gpt-5.4",
+		Payload: payload,
+	}, cliproxyexecutor.Options{
+		SourceFormat: sdktranslator.FromString("openai"),
+		Stream:       false,
+	})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if got := gjson.GetBytes(gotBody, "model").String(); got != "qwen3.6-plus" {
+		t.Fatalf("upstream model = %q, want qwen3.6-plus; body=%s", got, string(gotBody))
+	}
+}
+
 func TestCodexExecutorChatModeRoutesResponsesToChatCompletions(t *testing.T) {
 	var gotPath string
 	var gotBody []byte

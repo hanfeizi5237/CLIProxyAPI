@@ -585,6 +585,7 @@ func (e *CodexExecutor) executeChatMode(ctx context.Context, auth *cliproxyauth.
 	if opts.SourceFormat == sdktranslator.FromString("codex") {
 		return cliproxyexecutor.Response{}, statusErr{code: http.StatusBadRequest, msg: "request-mode=chat does not support codex downstream format; use OpenAI /v1/chat/completions or /v1/responses"}
 	}
+	req = e.resolveChatModeRequestModel(auth, req)
 	compat := NewOpenAICompatExecutor(e.Identifier(), e.cfg)
 	return compat.Execute(ctx, auth, req, opts)
 }
@@ -593,6 +594,7 @@ func (e *CodexExecutor) executeChatModeStream(ctx context.Context, auth *cliprox
 	if opts.SourceFormat == sdktranslator.FromString("codex") {
 		return nil, statusErr{code: http.StatusBadRequest, msg: "request-mode=chat does not support codex downstream format; use OpenAI /v1/chat/completions or /v1/responses"}
 	}
+	req = e.resolveChatModeRequestModel(auth, req)
 	compat := NewOpenAICompatExecutor(e.Identifier(), e.cfg)
 	return compat.ExecuteStream(ctx, auth, req, opts)
 }
@@ -601,8 +603,65 @@ func (e *CodexExecutor) countTokensChatMode(ctx context.Context, auth *cliproxya
 	if opts.SourceFormat == sdktranslator.FromString("codex") {
 		return cliproxyexecutor.Response{}, statusErr{code: http.StatusBadRequest, msg: "request-mode=chat does not support codex downstream format for token counting"}
 	}
+	req = e.resolveChatModeRequestModel(auth, req)
 	compat := NewOpenAICompatExecutor(e.Identifier(), e.cfg)
 	return compat.CountTokens(ctx, auth, req, opts)
+}
+
+func (e *CodexExecutor) resolveChatModeRequestModel(auth *cliproxyauth.Auth, req cliproxyexecutor.Request) cliproxyexecutor.Request {
+	resolved := e.resolveCodexModelAlias(auth, req.Model)
+	if strings.TrimSpace(resolved) == "" || strings.EqualFold(strings.TrimSpace(resolved), strings.TrimSpace(req.Model)) {
+		return req
+	}
+	req.Model = resolved
+	return req
+}
+
+func (e *CodexExecutor) resolveCodexModelAlias(auth *cliproxyauth.Auth, requestedModel string) string {
+	requestedModel = strings.TrimSpace(requestedModel)
+	if requestedModel == "" {
+		return ""
+	}
+	entry := e.resolveCodexConfig(auth)
+	if entry == nil || len(entry.Models) == 0 {
+		return requestedModel
+	}
+	requested := thinking.ParseSuffix(requestedModel)
+	requestedBase := strings.TrimSpace(requested.ModelName)
+	if requestedBase == "" {
+		requestedBase = requestedModel
+	}
+	for i := range entry.Models {
+		model := &entry.Models[i]
+		alias := strings.TrimSpace(model.Alias)
+		name := strings.TrimSpace(model.Name)
+		if alias == "" || name == "" {
+			continue
+		}
+		aliasBase := strings.TrimSpace(thinking.ParseSuffix(alias).ModelName)
+		if aliasBase == "" {
+			aliasBase = alias
+		}
+		if !strings.EqualFold(aliasBase, requestedBase) && !strings.EqualFold(alias, requestedModel) {
+			continue
+		}
+		return preserveCodexModelSuffix(name, requested)
+	}
+	return requestedModel
+}
+
+func preserveCodexModelSuffix(resolved string, requested thinking.SuffixResult) string {
+	resolved = strings.TrimSpace(resolved)
+	if resolved == "" {
+		return ""
+	}
+	if thinking.ParseSuffix(resolved).HasSuffix {
+		return resolved
+	}
+	if requested.HasSuffix && strings.TrimSpace(requested.RawSuffix) != "" {
+		return resolved + "(" + requested.RawSuffix + ")"
+	}
+	return resolved
 }
 
 func (e *CodexExecutor) codexRequestMode(auth *cliproxyauth.Auth) string {
