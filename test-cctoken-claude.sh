@@ -8,7 +8,7 @@ set -eu
 
 BASE_URL="${CCTOKEN_BASE_URL:-https://cli.cctoken.fun}"
 API_KEY="${CCTOKEN_API_KEY:-${CCTOKEN_ACCESS_TOKEN:-}}"
-MODEL="${CCTOKEN_CLAUDE_MODEL:-claude-sonnet-4-5}"
+MODEL="${CCTOKEN_CLAUDE_MODEL:-claude-sonnet-4-6}"
 
 if [ -z "$API_KEY" ]; then
   echo "Missing API key. Set CCTOKEN_API_KEY first." >&2
