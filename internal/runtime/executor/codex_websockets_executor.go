@@ -1640,6 +1640,9 @@ func codexWebsocketsEnabled(auth *cliproxyauth.Auth) bool {
 	if auth == nil {
 		return false
 	}
+	if codexAuthRequestMode(auth) == "chat" {
+		return false
+	}
 	if len(auth.Attributes) > 0 {
 		if raw := strings.TrimSpace(auth.Attributes["websockets"]); raw != "" {
 			parsed, errParse := strconv.ParseBool(raw)
@@ -1666,4 +1669,21 @@ func codexWebsocketsEnabled(auth *cliproxyauth.Auth) bool {
 	default:
 	}
 	return false
+}
+
+func codexAuthRequestMode(auth *cliproxyauth.Auth) string {
+	if auth == nil {
+		return "responses"
+	}
+	if len(auth.Attributes) > 0 {
+		if raw := strings.TrimSpace(auth.Attributes["request_mode"]); raw != "" {
+			return config.NormalizeCodexRequestMode(raw)
+		}
+	}
+	if len(auth.Metadata) > 0 {
+		if raw, ok := auth.Metadata["request_mode"].(string); ok && strings.TrimSpace(raw) != "" {
+			return config.NormalizeCodexRequestMode(raw)
+		}
+	}
+	return "responses"
 }

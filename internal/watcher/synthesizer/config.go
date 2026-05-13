@@ -181,10 +181,11 @@ func (s *ConfigSynthesizer) synthesizeCodexKeys(ctx *SynthesisContext) []*coreau
 		if ck.BaseURL != "" {
 			attrs["base_url"] = ck.BaseURL
 		}
-		if mode := config.NormalizeCodexRequestMode(ck.RequestMode); mode != "responses" {
+		mode := config.NormalizeCodexRequestMode(ck.RequestMode)
+		if mode != "responses" {
 			attrs["request_mode"] = mode
 		}
-		if ck.Websockets {
+		if ck.Websockets && mode != "chat" {
 			attrs["websockets"] = "true"
 		}
 		if hash := diff.ComputeCodexModelsHash(ck.Models); hash != "" {

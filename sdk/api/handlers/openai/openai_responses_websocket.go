@@ -533,6 +533,9 @@ func dedupeFunctionCallsByCallID(rawArray string) (string, error) {
 }
 
 func websocketUpstreamSupportsIncrementalInput(attributes map[string]string, metadata map[string]any) bool {
+	if responsesWebsocketRequestMode(attributes, metadata) == "chat" {
+		return false
+	}
 	if len(attributes) > 0 {
 		if raw := strings.TrimSpace(attributes["websockets"]); raw != "" {
 			parsed, errParse := strconv.ParseBool(raw)
@@ -659,7 +662,28 @@ func responsesWebsocketAuthSupportsCompactionReplay(auth *coreauth.Auth) bool {
 	if auth == nil {
 		return false
 	}
-	return strings.EqualFold(strings.TrimSpace(auth.Provider), "codex")
+	return strings.EqualFold(strings.TrimSpace(auth.Provider), "codex") &&
+		responsesWebsocketRequestMode(auth.Attributes, auth.Metadata) != "chat"
+}
+
+func responsesWebsocketRequestMode(attributes map[string]string, metadata map[string]any) string {
+	if len(attributes) > 0 {
+		if raw := strings.TrimSpace(attributes["request_mode"]); raw != "" {
+			if strings.EqualFold(raw, "chat") {
+				return "chat"
+			}
+			return "responses"
+		}
+	}
+	if len(metadata) > 0 {
+		if raw, ok := metadata["request_mode"].(string); ok && strings.TrimSpace(raw) != "" {
+			if strings.EqualFold(strings.TrimSpace(raw), "chat") {
+				return "chat"
+			}
+			return "responses"
+		}
+	}
+	return "responses"
 }
 
 func responsesWebsocketAuthAvailableForModel(auth *coreauth.Auth, modelName string, now time.Time) bool {
