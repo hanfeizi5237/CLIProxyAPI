@@ -2,9 +2,13 @@ package auth
 
 import (
 	"context"
+	"net/http"
 	"testing"
+	"time"
 
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
 func TestLookupAPIKeyUpstreamModel(t *testing.T) {
@@ -176,5 +180,94 @@ func TestApplyAPIKeyModelAlias(t *testing.T) {
 				t.Errorf("model = %q, want %q", resolvedModel, tt.wantModel)
 			}
 		})
+	}
+}
+
+func TestManager_CodexAPIKeyAliasUsesUpstreamModelForAvailability(t *testing.T) {
+	cfg := &internalconfig.Config{
+		CodexKey: []internalconfig.CodexKey{
+			{
+				APIKey:      "codex-key",
+				RequestMode: "chat",
+				Models: []internalconfig.CodexModel{
+					{Name: "qwen3.6-plus", Alias: "gpt-5.4"},
+				},
+			},
+		},
+	}
+
+	mgr := NewManager(nil, nil, nil)
+	mgr.SetConfig(cfg)
+	executor := &openAICompatPoolExecutor{id: "codex"}
+	mgr.RegisterExecutor(executor)
+
+	auth := &Auth{
+		ID:       "codex-auth",
+		Provider: "codex",
+		Attributes: map[string]string{
+			"api_key":      "codex-key",
+			"request_mode": "chat",
+		},
+	}
+
+	reg := registry.GetGlobalRegistry()
+	reg.RegisterClient(auth.ID, auth.Provider, []*registry.ModelInfo{{ID: "gpt-5.4"}})
+	t.Cleanup(func() {
+		reg.UnregisterClient(auth.ID)
+	})
+
+	ctx := context.Background()
+	if _, errRegister := mgr.Register(ctx, auth); errRegister != nil {
+		t.Fatalf("register auth: %v", errRegister)
+	}
+	if got := mgr.selectionModelForAuth(auth, "gpt-5.4"); got != "qwen3.6-plus" {
+		t.Fatalf("selection model = %q, want qwen3.6-plus", got)
+	}
+
+	mgr.MarkResult(ctx, Result{
+		AuthID:   auth.ID,
+		Provider: auth.Provider,
+		Model:    "gpt-5.4",
+		Success:  false,
+		Error: &Error{
+			HTTPStatus: http.StatusNotFound,
+			Message:    "model gpt-5.4 not found",
+		},
+	})
+	current, ok := mgr.GetByID(auth.ID)
+	if !ok {
+		t.Fatalf("auth %s not found after mark result", auth.ID)
+	}
+	if got := mgr.selectionModelForAuth(current, "gpt-5.4"); got != "qwen3.6-plus" {
+		t.Fatalf("current selection model = %q, want qwen3.6-plus", got)
+	}
+	if blocked, reason, _ := isAuthBlockedForModel(current, "qwen3.6-plus", time.Now()); blocked {
+		t.Fatalf("current auth blocked for upstream model: reason=%v state=%#v", reason, current.ModelStates)
+	}
+	picked, _, errPick := mgr.pickNextLegacy(ctx, "codex", "gpt-5.4", cliproxyexecutor.Options{}, nil)
+	if errPick != nil {
+		t.Fatalf("legacy pick auth with aliased model: %v", errPick)
+	}
+	if picked == nil || picked.ID != auth.ID {
+		t.Fatalf("picked auth = %#v, want %s", picked, auth.ID)
+	}
+	if got := mgr.prepareExecutionModels(picked, "gpt-5.4"); len(got) != 1 || got[0] != "qwen3.6-plus" {
+		t.Fatalf("prepared models = %v, want [qwen3.6-plus]", got)
+	}
+
+	resp, errExecute := mgr.Execute(ctx, []string{"codex"}, cliproxyexecutor.Request{Model: "gpt-5.4"}, cliproxyexecutor.Options{})
+	if errExecute != nil {
+		t.Fatalf("execute with aliased model: %v", errExecute)
+	}
+	if got := string(resp.Payload); got != "qwen3.6-plus" {
+		t.Fatalf("execute payload = %q, want upstream model qwen3.6-plus", got)
+	}
+
+	gotModels := executor.ExecuteModels()
+	if len(gotModels) != 1 {
+		t.Fatalf("execute models = %v, want one upstream call", gotModels)
+	}
+	if gotModels[0] != "qwen3.6-plus" {
+		t.Fatalf("execute model = %q, want qwen3.6-plus", gotModels[0])
 	}
 }

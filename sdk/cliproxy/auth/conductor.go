@@ -567,6 +567,10 @@ func (m *Manager) selectionModelForAuth(auth *Auth, routeModel string) string {
 		requestedModel = strings.TrimSpace(routeModel)
 	}
 	resolvedModel := m.applyOAuthModelAlias(auth, requestedModel)
+	if pool := m.resolveOpenAICompatUpstreamModelPool(auth, resolvedModel); len(pool) > 1 {
+		return resolvedModel
+	}
+	resolvedModel = m.applyAPIKeyModelAlias(auth, resolvedModel)
 	if strings.TrimSpace(resolvedModel) == "" {
 		resolvedModel = requestedModel
 	}
@@ -689,9 +693,14 @@ func (m *Manager) availableAuthsForRouteModel(auths []*Auth, provider, routeMode
 	return available, nil
 }
 
+const prefilteredSelectorModel = "__cliproxy_prefiltered_model__"
+
 func selectionArgForSelector(selector Selector, routeModel string) string {
 	if isBuiltInSelector(selector) {
-		return ""
+		// Built-in selectors receive candidates that have already been filtered
+		// for the route-aware model. Use a non-empty sentinel so their internal
+		// availability pass does not fall back to aggregate auth cooldown state.
+		return prefilteredSelectorModel
 	}
 	return routeModel
 }
