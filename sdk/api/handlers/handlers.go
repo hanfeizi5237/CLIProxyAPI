@@ -22,6 +22,8 @@ import (
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 	"golang.org/x/net/context"
 )
 
@@ -573,10 +575,11 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 		}
 		return nil, nil, &interfaces.ErrorMessage{StatusCode: status, Error: err, Addon: addon}
 	}
+	visiblePayload := restoreClientVisibleModel(resp.Payload, modelName)
 	if !PassthroughHeadersEnabled(h.Cfg) {
-		return resp.Payload, nil, nil
+		return visiblePayload, nil, nil
 	}
-	return resp.Payload, FilterUpstreamHeaders(resp.Headers), nil
+	return visiblePayload, FilterUpstreamHeaders(resp.Headers), nil
 }
 
 // ExecuteCountWithAuthManager executes a non-streaming request via the core auth manager.
@@ -621,10 +624,11 @@ func (h *BaseAPIHandler) ExecuteCountWithAuthManager(ctx context.Context, handle
 		}
 		return nil, nil, &interfaces.ErrorMessage{StatusCode: status, Error: err, Addon: addon}
 	}
+	visiblePayload := restoreClientVisibleModel(resp.Payload, modelName)
 	if !PassthroughHeadersEnabled(h.Cfg) {
-		return resp.Payload, nil, nil
+		return visiblePayload, nil, nil
 	}
-	return resp.Payload, FilterUpstreamHeaders(resp.Headers), nil
+	return visiblePayload, FilterUpstreamHeaders(resp.Headers), nil
 }
 
 // ExecuteStreamWithAuthManager executes a streaming request via the core auth manager.
@@ -788,14 +792,15 @@ func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handl
 					return
 				}
 				if len(chunk.Payload) > 0 {
+					payload := restoreClientVisibleModel(chunk.Payload, modelName)
 					if handlerType == "openai-response" {
-						if err := validateSSEDataJSON(chunk.Payload); err != nil {
+						if err := validateSSEDataJSON(payload); err != nil {
 							_ = sendErr(&interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: err})
 							return
 						}
 					}
 					sentPayload = true
-					if okSendData := sendData(cloneBytes(chunk.Payload)); !okSendData {
+					if okSendData := sendData(cloneBytes(payload)); !okSendData {
 						return
 					}
 				}
@@ -832,6 +837,74 @@ func validateSSEDataJSON(chunk []byte) error {
 		return fmt.Errorf("invalid SSE data JSON (len=%d): %q", len(data), preview)
 	}
 	return nil
+}
+
+func restoreClientVisibleModel(payload []byte, requestedModel string) []byte {
+	requestedModel = strings.TrimSpace(requestedModel)
+	if requestedModel == "" || len(payload) == 0 {
+		return payload
+	}
+	if patched, ok := restoreClientVisibleModelInSSE(payload, requestedModel); ok {
+		return patched
+	}
+	return restoreClientVisibleModelInJSON(payload, requestedModel)
+}
+
+func restoreClientVisibleModelInSSE(payload []byte, requestedModel string) ([]byte, bool) {
+	lines := bytes.Split(payload, []byte("\n"))
+	changed := false
+	seenData := false
+	for i, line := range lines {
+		trimmed := bytes.TrimSpace(line)
+		if !bytes.HasPrefix(trimmed, []byte("data:")) {
+			continue
+		}
+		seenData = true
+		data := bytes.TrimSpace(trimmed[len("data:"):])
+		if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
+			continue
+		}
+		patched := restoreClientVisibleModelInJSON(data, requestedModel)
+		if bytes.Equal(patched, data) {
+			continue
+		}
+		lines[i] = append([]byte("data: "), patched...)
+		changed = true
+	}
+	if !seenData {
+		return payload, false
+	}
+	if !changed {
+		return payload, true
+	}
+	return bytes.Join(lines, []byte("\n")), true
+}
+
+func restoreClientVisibleModelInJSON(payload []byte, requestedModel string) []byte {
+	if !json.Valid(bytes.TrimSpace(payload)) {
+		return payload
+	}
+	out := payload
+	for _, path := range clientVisibleModelPaths() {
+		if !gjson.GetBytes(out, path).Exists() {
+			continue
+		}
+		updated, errSet := sjson.SetBytes(out, path, requestedModel)
+		if errSet == nil {
+			out = updated
+		}
+	}
+	return out
+}
+
+func clientVisibleModelPaths() []string {
+	return []string{
+		"model",
+		"response.model",
+		"message.model",
+		"modelVersion",
+		"response.modelVersion",
+	}
 }
 
 func statusFromError(err error) int {

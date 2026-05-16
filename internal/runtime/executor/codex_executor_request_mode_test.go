@@ -75,7 +75,7 @@ func TestCodexExecutorChatModeResolvesConfigModelAlias(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		gotBody = body
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"chatcmpl_1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+		_, _ = w.Write([]byte(`{"id":"chatcmpl_1","object":"chat.completion","model":"qwen3.6-plus","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
 	}))
 	defer server.Close()
 
