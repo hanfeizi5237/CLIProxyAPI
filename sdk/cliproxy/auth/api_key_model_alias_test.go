@@ -271,3 +271,60 @@ func TestManager_CodexAPIKeyAliasUsesUpstreamModelForAvailability(t *testing.T) 
 		t.Fatalf("execute model = %q, want qwen3.6-plus", gotModels[0])
 	}
 }
+
+func TestManager_CodexAPIKeyAliasDoesNotBypassAuthWideCooldown(t *testing.T) {
+	cfg := &internalconfig.Config{
+		CodexKey: []internalconfig.CodexKey{
+			{
+				APIKey:      "codex-key-auth-wide",
+				RequestMode: "chat",
+				Models: []internalconfig.CodexModel{
+					{Name: "qwen3.6-plus", Alias: "gpt-5.4"},
+				},
+			},
+		},
+	}
+
+	mgr := NewManager(nil, nil, nil)
+	mgr.SetConfig(cfg)
+	executor := &openAICompatPoolExecutor{id: "codex"}
+	mgr.RegisterExecutor(executor)
+
+	auth := &Auth{
+		ID:       "codex-auth-wide",
+		Provider: "codex",
+		Attributes: map[string]string{
+			"api_key":      "codex-key-auth-wide",
+			"request_mode": "chat",
+		},
+	}
+
+	reg := registry.GetGlobalRegistry()
+	reg.RegisterClient(auth.ID, auth.Provider, []*registry.ModelInfo{{ID: "gpt-5.4"}})
+	t.Cleanup(func() {
+		reg.UnregisterClient(auth.ID)
+	})
+
+	ctx := context.Background()
+	if _, errRegister := mgr.Register(ctx, auth); errRegister != nil {
+		t.Fatalf("register auth: %v", errRegister)
+	}
+
+	mgr.MarkResult(ctx, Result{
+		AuthID:   auth.ID,
+		Provider: auth.Provider,
+		Success:  false,
+		Error: &Error{
+			HTTPStatus: http.StatusUnauthorized,
+			Message:    "unauthorized",
+		},
+	})
+
+	_, errExecute := mgr.Execute(ctx, []string{"codex"}, cliproxyexecutor.Request{Model: "gpt-5.4"}, cliproxyexecutor.Options{})
+	if errExecute == nil {
+		t.Fatal("expected auth-wide cooldown to block aliased request")
+	}
+	if got := executor.ExecuteModels(); len(got) != 0 {
+		t.Fatalf("execute models = %v, want no upstream call while auth is cooling down", got)
+	}
+}

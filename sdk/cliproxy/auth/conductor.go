@@ -647,6 +647,16 @@ func (m *Manager) availableAuthsForRouteModel(auths []*Auth, provider, routeMode
 	cooldownCount := 0
 	var earliest time.Time
 	for _, candidate := range auths {
+		authWideBlocked, authWideReason, authWideNext := isAuthWideBlockedForRoute(candidate, now)
+		if authWideBlocked {
+			if authWideReason == blockReasonCooldown {
+				cooldownCount++
+				if !authWideNext.IsZero() && (earliest.IsZero() || authWideNext.Before(earliest)) {
+					earliest = authWideNext
+				}
+			}
+			continue
+		}
 		checkModel := m.selectionModelForAuth(candidate, routeModel)
 		blocked, reason, next := isAuthBlockedForModel(candidate, checkModel, now)
 		if !blocked {
@@ -691,6 +701,16 @@ func (m *Manager) availableAuthsForRouteModel(auths []*Auth, provider, routeMode
 		sort.Slice(available, func(i, j int) bool { return available[i].ID < available[j].ID })
 	}
 	return available, nil
+}
+
+func isAuthWideBlockedForRoute(auth *Auth, now time.Time) (bool, blockReason, time.Time) {
+	if auth == nil {
+		return true, blockReasonOther, time.Time{}
+	}
+	if len(auth.ModelStates) > 0 {
+		return false, blockReasonNone, time.Time{}
+	}
+	return isAuthBlockedForModel(auth, "", now)
 }
 
 const prefilteredSelectorModel = "__cliproxy_prefiltered_model__"
@@ -2660,6 +2680,7 @@ func applyAuthFailureState(auth *Auth, resultErr *Error, retryAfter *time.Durati
 		return
 	}
 	disableCooling := quotaCooldownDisabledForAuth(auth)
+	auth.ModelStates = nil
 	auth.Unavailable = true
 	auth.Status = StatusError
 	auth.UpdatedAt = now
