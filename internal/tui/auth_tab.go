@@ -282,6 +282,8 @@ func (m authTabModel) renderDetail(f map[string]any) string {
 		{"Priority", "priority", true},
 		{"Project ID", "project_id", false},
 		{"Disabled", "disabled", false},
+		{T("success_label"), "success", false},
+		{T("failure_label"), "failed", false},
 		{"Created", "created_at", false},
 		{"Updated", "updated_at", false},
 	}
