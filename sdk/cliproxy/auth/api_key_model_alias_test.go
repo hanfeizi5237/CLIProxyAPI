@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -326,5 +327,72 @@ func TestManager_CodexAPIKeyAliasDoesNotBypassAuthWideCooldown(t *testing.T) {
 	}
 	if got := executor.ExecuteModels(); len(got) != 0 {
 		t.Fatalf("execute models = %v, want no upstream call while auth is cooling down", got)
+	}
+}
+
+func TestResolveCodexAPIKeyConfig_PrefersExactBaseURLWithSharedAPIKey(t *testing.T) {
+	cfg := &internalconfig.Config{
+		CodexKey: []internalconfig.CodexKey{
+			{
+				APIKey:  "shared-key",
+				BaseURL: "https://api.openai.com/v1",
+				Models: []internalconfig.CodexModel{
+					{Name: "gpt-5.4", Alias: "gpt-5.4"},
+				},
+			},
+			{
+				APIKey:  "shared-key",
+				BaseURL: "https://coding.dashscope.aliyuncs.com/v1",
+				Models: []internalconfig.CodexModel{
+					{Name: "qwen3.6-plus", Alias: "gpt-5.4"},
+				},
+			},
+		},
+	}
+
+	auth := &Auth{
+		ID:       "shared-auth",
+		Provider: "codex",
+		Attributes: map[string]string{
+			"api_key":  "shared-key",
+			"base_url": "https://coding.dashscope.aliyuncs.com/v1/",
+		},
+	}
+
+	entry := resolveCodexAPIKeyConfig(cfg, auth)
+	if entry == nil {
+		t.Fatal("resolveCodexAPIKeyConfig returned nil")
+	}
+	if got := strings.TrimSpace(entry.BaseURL); got != "https://coding.dashscope.aliyuncs.com/v1" {
+		t.Fatalf("resolved base_url = %q, want https://coding.dashscope.aliyuncs.com/v1", got)
+	}
+
+	mgr := NewManager(nil, nil, nil)
+	mgr.SetConfig(cfg)
+	upstream := mgr.applyAPIKeyModelAlias(auth, "gpt-5.4")
+	if upstream != "qwen3.6-plus" {
+		t.Fatalf("applyAPIKeyModelAlias() = %q, want qwen3.6-plus", upstream)
+	}
+}
+
+func TestResolveCodexAPIKeyConfig_SharedAPIKeyNoBaseURLMatchReturnsNil(t *testing.T) {
+	cfg := &internalconfig.Config{
+		CodexKey: []internalconfig.CodexKey{
+			{APIKey: "shared-key", BaseURL: "https://api.openai.com/v1"},
+			{APIKey: "shared-key", BaseURL: "https://coding.dashscope.aliyuncs.com/v1"},
+		},
+	}
+	auth := &Auth{
+		ID:       "shared-auth-no-match",
+		Provider: "codex",
+		Attributes: map[string]string{
+			"api_key":  "shared-key",
+			"base_url": "https://other.example.com/v1",
+		},
+	}
+
+	entry := resolveCodexAPIKeyConfig(cfg, auth)
+	if entry != nil {
+		t.Fatalf("resolveCodexAPIKeyConfig should return nil for ambiguous shared key, got base_url=%q", entry.BaseURL)
 	}
 }

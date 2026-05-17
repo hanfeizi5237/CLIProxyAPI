@@ -1832,34 +1832,45 @@ func resolveAPIKeyConfig[T APIKeyConfigEntry](entries []T, auth *Auth) *T {
 		attrKey = strings.TrimSpace(auth.Attributes["api_key"])
 		attrBase = strings.TrimSpace(auth.Attributes["base_url"])
 	}
+	normalizedAttrBase := normalizeAPIKeyConfigBaseURL(attrBase)
+
+	keyMatches := make([]*T, 0, len(entries))
 	for i := range entries {
 		entry := &entries[i]
 		cfgKey := strings.TrimSpace((*entry).GetAPIKey())
 		cfgBase := strings.TrimSpace((*entry).GetBaseURL())
-		if attrKey != "" && attrBase != "" {
-			if strings.EqualFold(cfgKey, attrKey) && strings.EqualFold(cfgBase, attrBase) {
+		if attrKey != "" && strings.EqualFold(cfgKey, attrKey) {
+			keyMatches = append(keyMatches, entry)
+			normalizedCfgBase := normalizeAPIKeyConfigBaseURL(cfgBase)
+			if normalizedAttrBase != "" && baseURLEquals(normalizedCfgBase, normalizedAttrBase) {
 				return entry
 			}
 			continue
 		}
-		if attrKey != "" && strings.EqualFold(cfgKey, attrKey) {
-			if cfgBase == "" || strings.EqualFold(cfgBase, attrBase) {
-				return entry
-			}
-		}
-		if attrKey == "" && attrBase != "" && strings.EqualFold(cfgBase, attrBase) {
+		if attrKey == "" && normalizedAttrBase != "" && baseURLEquals(normalizeAPIKeyConfigBaseURL(cfgBase), normalizedAttrBase) {
 			return entry
 		}
 	}
+
 	if attrKey != "" {
-		for i := range entries {
-			entry := &entries[i]
-			if strings.EqualFold(strings.TrimSpace((*entry).GetAPIKey()), attrKey) {
-				return entry
-			}
+		if len(keyMatches) == 1 {
+			return keyMatches[0]
 		}
+		// When multiple entries share the same API key and no exact base-url match
+		// exists, avoid picking a random entry by order.
+		return nil
 	}
 	return nil
+}
+
+func normalizeAPIKeyConfigBaseURL(base string) string {
+	base = strings.TrimSpace(base)
+	base = strings.TrimRight(base, "/")
+	return base
+}
+
+func baseURLEquals(a, b string) bool {
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
 }
 
 func resolveGeminiAPIKeyConfig(cfg *internalconfig.Config, auth *Auth) *internalconfig.GeminiKey {
