@@ -567,10 +567,6 @@ func (m *Manager) selectionModelForAuth(auth *Auth, routeModel string) string {
 		requestedModel = strings.TrimSpace(routeModel)
 	}
 	resolvedModel := m.applyOAuthModelAlias(auth, requestedModel)
-	if pool := m.resolveOpenAICompatUpstreamModelPool(auth, resolvedModel); len(pool) > 1 {
-		return resolvedModel
-	}
-	resolvedModel = m.applyAPIKeyModelAlias(auth, resolvedModel)
 	if strings.TrimSpace(resolvedModel) == "" {
 		resolvedModel = requestedModel
 	}
@@ -647,16 +643,6 @@ func (m *Manager) availableAuthsForRouteModel(auths []*Auth, provider, routeMode
 	cooldownCount := 0
 	var earliest time.Time
 	for _, candidate := range auths {
-		authWideBlocked, authWideReason, authWideNext := isAuthWideBlockedForRoute(candidate, now)
-		if authWideBlocked {
-			if authWideReason == blockReasonCooldown {
-				cooldownCount++
-				if !authWideNext.IsZero() && (earliest.IsZero() || authWideNext.Before(earliest)) {
-					earliest = authWideNext
-				}
-			}
-			continue
-		}
 		checkModel := m.selectionModelForAuth(candidate, routeModel)
 		blocked, reason, next := isAuthBlockedForModel(candidate, checkModel, now)
 		if !blocked {
@@ -703,24 +689,9 @@ func (m *Manager) availableAuthsForRouteModel(auths []*Auth, provider, routeMode
 	return available, nil
 }
 
-func isAuthWideBlockedForRoute(auth *Auth, now time.Time) (bool, blockReason, time.Time) {
-	if auth == nil {
-		return true, blockReasonOther, time.Time{}
-	}
-	if len(auth.ModelStates) > 0 {
-		return false, blockReasonNone, time.Time{}
-	}
-	return isAuthBlockedForModel(auth, "", now)
-}
-
-const prefilteredSelectorModel = "__cliproxy_prefiltered_model__"
-
 func selectionArgForSelector(selector Selector, routeModel string) string {
 	if isBuiltInSelector(selector) {
-		// Built-in selectors receive candidates that have already been filtered
-		// for the route-aware model. Use a non-empty sentinel so their internal
-		// availability pass does not fall back to aggregate auth cooldown state.
-		return prefilteredSelectorModel
+		return ""
 	}
 	return routeModel
 }
@@ -1832,45 +1803,34 @@ func resolveAPIKeyConfig[T APIKeyConfigEntry](entries []T, auth *Auth) *T {
 		attrKey = strings.TrimSpace(auth.Attributes["api_key"])
 		attrBase = strings.TrimSpace(auth.Attributes["base_url"])
 	}
-	normalizedAttrBase := normalizeAPIKeyConfigBaseURL(attrBase)
-
-	keyMatches := make([]*T, 0, len(entries))
 	for i := range entries {
 		entry := &entries[i]
 		cfgKey := strings.TrimSpace((*entry).GetAPIKey())
 		cfgBase := strings.TrimSpace((*entry).GetBaseURL())
-		if attrKey != "" && strings.EqualFold(cfgKey, attrKey) {
-			keyMatches = append(keyMatches, entry)
-			normalizedCfgBase := normalizeAPIKeyConfigBaseURL(cfgBase)
-			if normalizedAttrBase != "" && baseURLEquals(normalizedCfgBase, normalizedAttrBase) {
+		if attrKey != "" && attrBase != "" {
+			if strings.EqualFold(cfgKey, attrKey) && strings.EqualFold(cfgBase, attrBase) {
 				return entry
 			}
 			continue
 		}
-		if attrKey == "" && normalizedAttrBase != "" && baseURLEquals(normalizeAPIKeyConfigBaseURL(cfgBase), normalizedAttrBase) {
+		if attrKey != "" && strings.EqualFold(cfgKey, attrKey) {
+			if cfgBase == "" || strings.EqualFold(cfgBase, attrBase) {
+				return entry
+			}
+		}
+		if attrKey == "" && attrBase != "" && strings.EqualFold(cfgBase, attrBase) {
 			return entry
 		}
 	}
-
 	if attrKey != "" {
-		if len(keyMatches) == 1 {
-			return keyMatches[0]
+		for i := range entries {
+			entry := &entries[i]
+			if strings.EqualFold(strings.TrimSpace((*entry).GetAPIKey()), attrKey) {
+				return entry
+			}
 		}
-		// When multiple entries share the same API key and no exact base-url match
-		// exists, avoid picking a random entry by order.
-		return nil
 	}
 	return nil
-}
-
-func normalizeAPIKeyConfigBaseURL(base string) string {
-	base = strings.TrimSpace(base)
-	base = strings.TrimRight(base, "/")
-	return base
-}
-
-func baseURLEquals(a, b string) bool {
-	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
 }
 
 func resolveGeminiAPIKeyConfig(cfg *internalconfig.Config, auth *Auth) *internalconfig.GeminiKey {
@@ -2691,7 +2651,6 @@ func applyAuthFailureState(auth *Auth, resultErr *Error, retryAfter *time.Durati
 		return
 	}
 	disableCooling := quotaCooldownDisabledForAuth(auth)
-	auth.ModelStates = nil
 	auth.Unavailable = true
 	auth.Status = StatusError
 	auth.UpdatedAt = now
