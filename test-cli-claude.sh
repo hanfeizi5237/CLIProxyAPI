@@ -1,14 +1,15 @@
 #!/bin/sh
 set -eu
 
-# Minimal OpenAI-compatible request against the cctoken CLIProxyAPI endpoint.
+# Minimal Claude Messages request against the cctoken CLIProxyAPI endpoint.
 # Required: export CCTOKEN_API_KEY="your access key"
 # Optional: export CCTOKEN_BASE_URL="https://cli.cctoken.fun"
-# Optional: export CCTOKEN_OPENAI_MODEL="gpt-5.4"
+# Optional: export CCTOKEN_CLAUDE_MODEL="claude-sonnet-4-5"
 
-BASE_URL="${CCTOKEN_BASE_URL:-https://cli.cctoken.fun}"
-API_KEY="${CCTOKEN_API_KEY:-${CCTOKEN_ACCESS_TOKEN:-}}"
-MODEL="${CCTOKEN_OPENAI_MODEL:-gpt-5.4}"
+# BASE_URL="${CCTOKEN_BASE_URL:-https://cli.cctoken.fun}"
+BASE_URL="${CCTOKEN_BASE_URL:-http://127.0.0.1:18317}"
+API_KEY="local-test-key"
+MODEL="${CCTOKEN_CLAUDE_MODEL:-claude-sonnet-4-6}"
 
 if [ -z "$API_KEY" ]; then
   echo "Missing API key. Set CCTOKEN_API_KEY first." >&2
@@ -16,12 +17,14 @@ if [ -z "$API_KEY" ]; then
 fi
 
 response="$(
-  curl -sS "${BASE_URL%/}/v1/chat/completions" \
+  curl -sS "${BASE_URL%/}/v1/messages" \
     -H "Authorization: Bearer ${API_KEY}" \
     -H "Content-Type: application/json" \
+    -H "anthropic-version: 2023-06-01" \
     --data-binary @- <<EOF
 {
   "model": "${MODEL}",
+  "max_tokens": 32,
   "messages": [
     {
       "role": "user",
