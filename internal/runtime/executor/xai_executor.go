@@ -117,7 +117,7 @@ func (e *XAIExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req 
 		return resp, err
 	}
 
-	reporter := helps.NewExecutorUsageReporter(ctx, e, prepared.baseModel, auth)
+	reporter := helps.NewUsageReporter(ctx, e.Identifier(), prepared.baseModel, auth)
 	defer reporter.TrackFailure(ctx, &err)
 	reporter.SetTranslatedReasoningEffort(prepared.body, e.Identifier())
 
@@ -195,9 +195,9 @@ func (e *XAIExecutor) executeChatMode(ctx context.Context, auth *cliproxyauth.Au
 		return resp, err
 	}
 
-	reporter := helps.NewExecutorUsageReporter(ctx, e, prepared.baseModel, auth)
+	reporter := helps.NewUsageReporter(ctx, e.Identifier(), prepared.baseModel, auth)
 	defer reporter.TrackFailure(ctx, &err)
-	reporter.SetTranslatedReasoningEffort(prepared.body, prepared.to.String())
+	reporter.SetTranslatedReasoningEffort(prepared.body, e.Identifier())
 
 	url := strings.TrimSuffix(baseURL, "/") + "/chat/completions"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(prepared.body))
@@ -370,7 +370,7 @@ func (e *XAIExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth
 		return nil, err
 	}
 
-	reporter := helps.NewExecutorUsageReporter(ctx, e, prepared.baseModel, auth)
+	reporter := helps.NewUsageReporter(ctx, e.Identifier(), prepared.baseModel, auth)
 	defer reporter.TrackFailure(ctx, &err)
 	reporter.SetTranslatedReasoningEffort(prepared.body, e.Identifier())
 
@@ -467,9 +467,9 @@ func (e *XAIExecutor) executeChatModeStream(ctx context.Context, auth *cliproxya
 	}
 	prepared.body, _ = sjson.SetBytes(prepared.body, "stream_options.include_usage", true)
 
-	reporter := helps.NewExecutorUsageReporter(ctx, e, prepared.baseModel, auth)
+	reporter := helps.NewUsageReporter(ctx, e.Identifier(), prepared.baseModel, auth)
 	defer reporter.TrackFailure(ctx, &err)
-	reporter.SetTranslatedReasoningEffort(prepared.body, prepared.to.String())
+	reporter.SetTranslatedReasoningEffort(prepared.body, e.Identifier())
 
 	url := strings.TrimSuffix(baseURL, "/") + "/chat/completions"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(prepared.body))
