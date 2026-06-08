@@ -122,6 +122,7 @@ func (e *XAIExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req 
 	reporter.SetTranslatedReasoningEffort(prepared.body, e.Identifier())
 
 	url := strings.TrimSuffix(baseURL, "/") + "/responses"
+	e.logXAIDiagnostic(auth, req, opts, prepared, "/responses", true)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(prepared.body))
 	if err != nil {
 		return resp, err
@@ -200,6 +201,7 @@ func (e *XAIExecutor) executeChatMode(ctx context.Context, auth *cliproxyauth.Au
 	reporter.SetTranslatedReasoningEffort(prepared.body, e.Identifier())
 
 	url := strings.TrimSuffix(baseURL, "/") + "/chat/completions"
+	e.logXAIDiagnostic(auth, req, opts, prepared, "/chat/completions", false)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(prepared.body))
 	if err != nil {
 		return resp, err
@@ -375,6 +377,7 @@ func (e *XAIExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth
 	reporter.SetTranslatedReasoningEffort(prepared.body, e.Identifier())
 
 	url := strings.TrimSuffix(baseURL, "/") + "/responses"
+	e.logXAIDiagnostic(auth, req, opts, prepared, "/responses", true)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(prepared.body))
 	if err != nil {
 		return nil, err
@@ -472,6 +475,7 @@ func (e *XAIExecutor) executeChatModeStream(ctx context.Context, auth *cliproxya
 	reporter.SetTranslatedReasoningEffort(prepared.body, e.Identifier())
 
 	url := strings.TrimSuffix(baseURL, "/") + "/chat/completions"
+	e.logXAIDiagnostic(auth, req, opts, prepared, "/chat/completions", true)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(prepared.body))
 	if err != nil {
 		return nil, err
@@ -769,6 +773,59 @@ func (e *XAIExecutor) xaiRequestMode(auth *cliproxyauth.Auth) string {
 	default:
 		return "responses"
 	}
+}
+
+func (e *XAIExecutor) logXAIDiagnostic(auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, prepared *xaiPreparedRequest, upstreamPath string, stream bool) {
+	if prepared == nil {
+		return
+	}
+	authID := ""
+	authLabel := ""
+	attrMode := ""
+	metadataMode := ""
+	if auth != nil {
+		authID = strings.TrimSpace(auth.ID)
+		authLabel = strings.TrimSpace(auth.Label)
+		if auth.Attributes != nil {
+			attrMode = strings.TrimSpace(auth.Attributes["request_mode"])
+		}
+		metadataMode = xaiMetadataString(auth.Metadata, "request_mode")
+	}
+
+	sourceBody := req.Payload
+	if len(opts.OriginalRequest) > 0 {
+		sourceBody = opts.OriginalRequest
+	}
+	sessionID := xaiExecutionSessionID(req, opts)
+	sessionSummary := ""
+	if sessionID != "" {
+		sessionSummary = sessionID
+		if len(sessionSummary) > 12 {
+			sessionSummary = sessionSummary[:12] + "..."
+		}
+	}
+
+	log.WithFields(log.Fields{
+		"provider":                e.Identifier(),
+		"auth_id":                 authID,
+		"auth_label":              authLabel,
+		"selected_request_mode":   e.xaiRequestMode(auth),
+		"attr_request_mode":       attrMode,
+		"metadata_request_mode":   metadataMode,
+		"client_request_path":     helps.PayloadRequestPath(opts),
+		"upstream_path":           upstreamPath,
+		"source_format":           opts.SourceFormat.String(),
+		"request_model":           req.Model,
+		"upstream_model":          prepared.baseModel,
+		"stream":                  stream,
+		"source_has_input":        gjson.GetBytes(sourceBody, "input").Exists(),
+		"source_has_messages":     gjson.GetBytes(sourceBody, "messages").Exists(),
+		"translated_has_input":    gjson.GetBytes(prepared.body, "input").Exists(),
+		"translated_has_messages": gjson.GetBytes(prepared.body, "messages").Exists(),
+		"source_tool_count":       len(gjson.GetBytes(sourceBody, "tools").Array()),
+		"translated_tool_count":   len(gjson.GetBytes(prepared.body, "tools").Array()),
+		"prompt_cache_key":        sessionSummary,
+	}).Info("xai diagnostic route decision")
 }
 
 func (e *XAIExecutor) recordXAIRequest(ctx context.Context, auth *cliproxyauth.Auth, url string, headers http.Header, body []byte) {
