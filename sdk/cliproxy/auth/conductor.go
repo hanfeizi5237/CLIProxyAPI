@@ -629,7 +629,14 @@ func (m *Manager) selectionModelForAuth(auth *Auth, routeModel string) string {
 	if strings.TrimSpace(requestedModel) == "" {
 		requestedModel = strings.TrimSpace(routeModel)
 	}
+	if pool := m.resolveOpenAICompatUpstreamModelPool(auth, requestedModel); len(pool) > 1 {
+		return requestedModel
+	}
 	resolvedModel := m.applyOAuthModelAlias(auth, requestedModel)
+	if strings.TrimSpace(resolvedModel) == "" {
+		resolvedModel = requestedModel
+	}
+	resolvedModel = m.applyAPIKeyModelAlias(auth, resolvedModel)
 	if strings.TrimSpace(resolvedModel) == "" {
 		resolvedModel = requestedModel
 	}
@@ -2397,12 +2404,12 @@ func resolveAPIKeyConfig[T APIKeyConfigEntry](entries []T, auth *Auth) *T {
 	attrKey, attrBase := "", ""
 	if auth.Attributes != nil {
 		attrKey = strings.TrimSpace(auth.Attributes["api_key"])
-		attrBase = strings.TrimSpace(auth.Attributes["base_url"])
+		attrBase = normalizeAPIKeyBaseURL(auth.Attributes["base_url"])
 	}
 	for i := range entries {
 		entry := &entries[i]
 		cfgKey := strings.TrimSpace((*entry).GetAPIKey())
-		cfgBase := strings.TrimSpace((*entry).GetBaseURL())
+		cfgBase := normalizeAPIKeyBaseURL((*entry).GetBaseURL())
 		if attrKey != "" && attrBase != "" {
 			if strings.EqualFold(cfgKey, attrKey) && strings.EqualFold(cfgBase, attrBase) {
 				return entry
@@ -2419,6 +2426,9 @@ func resolveAPIKeyConfig[T APIKeyConfigEntry](entries []T, auth *Auth) *T {
 		}
 	}
 	if attrKey != "" {
+		if attrBase != "" {
+			return nil
+		}
 		for i := range entries {
 			entry := &entries[i]
 			if strings.EqualFold(strings.TrimSpace((*entry).GetAPIKey()), attrKey) {
@@ -2427,6 +2437,12 @@ func resolveAPIKeyConfig[T APIKeyConfigEntry](entries []T, auth *Auth) *T {
 		}
 	}
 	return nil
+}
+
+func normalizeAPIKeyBaseURL(raw string) string {
+	baseURL := strings.TrimSpace(raw)
+	baseURL = strings.TrimSuffix(baseURL, "/")
+	return baseURL
 }
 
 func resolveGeminiAPIKeyConfig(cfg *internalconfig.Config, auth *Auth) *internalconfig.GeminiKey {
@@ -2742,10 +2758,22 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 	clearModelQuota := false
 	setModelQuota := false
 	var authSnapshot *Auth
+	resultModel := strings.TrimSpace(result.Model)
+	normalizedResultModel := resultModel
 
 	m.mu.Lock()
 	if auth, ok := m.auths[result.AuthID]; ok && auth != nil {
 		now := time.Now()
+		if normalizedResultModel != "" {
+			if normalizedModel := strings.TrimSpace(m.selectionModelForAuth(auth, normalizedResultModel)); normalizedModel != "" {
+				normalizedResultModel = normalizedModel
+			}
+		}
+		ignoreVisibleAliasModelFailure := shouldIgnoreVisibleAliasModelFailure(auth, resultModel, normalizedResultModel, result.Error)
+		stateResultModel := resultModel
+		if !ignoreVisibleAliasModelFailure && normalizedResultModel != "" {
+			stateResultModel = normalizedResultModel
+		}
 		auth.recordRecentRequest(now, result.Success)
 		if result.Success {
 			auth.Success++
@@ -2754,8 +2782,8 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 		}
 
 		if result.Success {
-			if result.Model != "" {
-				state := ensureModelState(auth, result.Model)
+			if normalizedResultModel != "" {
+				state := ensureModelState(auth, normalizedResultModel)
 				resetModelState(state, now)
 				updateAggregatedAvailability(auth, now)
 				if !hasModelError(auth, now) {
@@ -2770,10 +2798,10 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 				clearAuthStateOnSuccess(auth, now)
 			}
 		} else {
-			if result.Model != "" {
-				if !isRequestScopedNotFoundResultError(result.Error) {
+			if resultModel != "" {
+				if !isRequestScopedNotFoundResultError(result.Error) && !ignoreVisibleAliasModelFailure {
 					disableCooling := quotaCooldownDisabledForAuth(auth)
-					state := ensureModelState(auth, result.Model)
+					state := ensureModelState(auth, stateResultModel)
 					state.Unavailable = true
 					state.Status = StatusError
 					state.UpdatedAt = now
@@ -2887,16 +2915,16 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 		m.scheduler.upsertAuth(authSnapshot)
 	}
 
-	if clearModelQuota && result.Model != "" {
-		registry.GetGlobalRegistry().ClearModelQuotaExceeded(result.AuthID, result.Model)
+	if clearModelQuota && normalizedResultModel != "" {
+		registry.GetGlobalRegistry().ClearModelQuotaExceeded(result.AuthID, normalizedResultModel)
 	}
-	if setModelQuota && result.Model != "" {
-		registry.GetGlobalRegistry().SetModelQuotaExceeded(result.AuthID, result.Model)
+	if setModelQuota && resultModel != "" {
+		registry.GetGlobalRegistry().SetModelQuotaExceeded(result.AuthID, resultModel)
 	}
 	if shouldResumeModel {
-		registry.GetGlobalRegistry().ResumeClientModel(result.AuthID, result.Model)
+		registry.GetGlobalRegistry().ResumeClientModel(result.AuthID, normalizedResultModel)
 	} else if shouldSuspendModel {
-		registry.GetGlobalRegistry().SuspendClientModel(result.AuthID, result.Model, suspendReason)
+		registry.GetGlobalRegistry().SuspendClientModel(result.AuthID, resultModel, suspendReason)
 	}
 
 	m.hook.OnResult(ctx, result)
@@ -3025,6 +3053,7 @@ func clearAggregatedAvailability(auth *Auth) {
 	auth.Unavailable = false
 	auth.NextRetryAfter = time.Time{}
 	auth.Quota = QuotaState{}
+	auth.AuthWideUnavailable = false
 }
 
 func hasModelError(auth *Auth, now time.Time) bool {
@@ -3052,6 +3081,7 @@ func clearAuthStateOnSuccess(auth *Auth, now time.Time) {
 		return
 	}
 	auth.Unavailable = false
+	auth.AuthWideUnavailable = false
 	auth.Status = StatusActive
 	auth.StatusMessage = ""
 	auth.Quota.Exceeded = false
@@ -3256,6 +3286,25 @@ func isRequestScopedNotFoundResultError(err *Error) bool {
 	return isRequestScopedNotFoundMessage(err.Message)
 }
 
+func shouldIgnoreVisibleAliasModelFailure(auth *Auth, resultModel, normalizedModel string, err *Error) bool {
+	if auth == nil || err == nil {
+		return false
+	}
+	kind, _ := auth.AccountInfo()
+	if !strings.EqualFold(strings.TrimSpace(kind), "api_key") {
+		return false
+	}
+	resultKey := canonicalModelKey(resultModel)
+	normalizedKey := canonicalModelKey(normalizedModel)
+	if resultKey == "" || normalizedKey == "" || strings.EqualFold(resultKey, normalizedKey) {
+		return false
+	}
+	if statusCodeFromResult(err) != http.StatusNotFound {
+		return false
+	}
+	return strings.Contains(strings.ToLower(strings.TrimSpace(err.Message)), "not found")
+}
+
 // isRequestInvalidError returns true if the error represents a client request
 // error that should not be retried. Specifically, it treats 400 responses with
 // "invalid_request_error", request-scoped 404 item misses caused by `store=false`,
@@ -3301,6 +3350,7 @@ func applyAuthFailureState(auth *Auth, resultErr *Error, retryAfter *time.Durati
 	}
 	disableCooling := quotaCooldownDisabledForAuth(auth)
 	auth.Unavailable = true
+	auth.AuthWideUnavailable = true
 	auth.Status = StatusError
 	auth.UpdatedAt = now
 	if resultErr != nil {
