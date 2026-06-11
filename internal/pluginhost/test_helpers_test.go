@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
@@ -21,7 +22,7 @@ func newTestSymbolLoader() *testSymbolLoader {
 	return &testSymbolLoader{lookups: make(map[string]*testSymbolLookup)}
 }
 
-func (l *testSymbolLoader) Open(path string) (symbolLookup, error) {
+func (l *testSymbolLoader) Open(path string, host *Host) (pluginClient, error) {
 	l.openCalls++
 	lookup := l.lookups[pluginIDFromPath(path)]
 	if lookup == nil {
@@ -31,24 +32,149 @@ func (l *testSymbolLoader) Open(path string) (symbolLookup, error) {
 }
 
 type testSymbolLookup struct {
-	symbols map[string]any
+	plugin              *testPlugin
+	active              pluginapi.Plugin
+	registerOverride    func([]byte) pluginapi.Plugin
+	reconfigureOverride func([]byte) pluginapi.Plugin
 }
 
 func newTestSymbolLookup(plugin *testPlugin) *testSymbolLookup {
-	return &testSymbolLookup{
-		symbols: map[string]any{
-			"Register":    plugin.Register,
-			"Reconfigure": plugin.Reconfigure,
-		},
+	return &testSymbolLookup{plugin: plugin}
+}
+
+func (l *testSymbolLookup) Call(ctx context.Context, method string, request []byte) ([]byte, error) {
+	switch method {
+	case pluginabi.MethodPluginRegister:
+		return l.callLifecycle(request, false)
+	case pluginabi.MethodPluginReconfigure:
+		return l.callLifecycle(request, true)
+	case pluginabi.MethodThinkingIdentifier:
+		if l.active.Capabilities.ThinkingApplier == nil {
+			return nil, fmt.Errorf("missing thinking applier")
+		}
+		return marshalRPCResult(rpcIdentifierResponse{Identifier: l.active.Capabilities.ThinkingApplier.Identifier()})
+	case pluginabi.MethodThinkingApply:
+		var req pluginapi.ThinkingApplyRequest
+		if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
+			return nil, errUnmarshal
+		}
+		resp, errApply := l.active.Capabilities.ThinkingApplier.ApplyThinking(ctx, req)
+		if errApply != nil {
+			return nil, errApply
+		}
+		return marshalRPCResult(resp)
+	case pluginabi.MethodRequestInterceptBefore:
+		if l.active.Capabilities.RequestInterceptor == nil {
+			return nil, fmt.Errorf("missing request interceptor")
+		}
+		var req pluginapi.RequestInterceptRequest
+		if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
+			return nil, errUnmarshal
+		}
+		resp, errIntercept := l.active.Capabilities.RequestInterceptor.InterceptRequestBeforeAuth(ctx, req)
+		if errIntercept != nil {
+			return nil, errIntercept
+		}
+		return marshalRPCResult(resp)
+	case pluginabi.MethodRequestInterceptAfter:
+		if l.active.Capabilities.RequestInterceptor == nil {
+			return nil, fmt.Errorf("missing request interceptor")
+		}
+		var req pluginapi.RequestInterceptRequest
+		if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
+			return nil, errUnmarshal
+		}
+		resp, errIntercept := l.active.Capabilities.RequestInterceptor.InterceptRequestAfterAuth(ctx, req)
+		if errIntercept != nil {
+			return nil, errIntercept
+		}
+		return marshalRPCResult(resp)
+	case pluginabi.MethodResponseInterceptAfter:
+		if l.active.Capabilities.ResponseInterceptor == nil {
+			return nil, fmt.Errorf("missing response interceptor")
+		}
+		var req pluginapi.ResponseInterceptRequest
+		if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
+			return nil, errUnmarshal
+		}
+		resp, errIntercept := l.active.Capabilities.ResponseInterceptor.InterceptResponse(ctx, req)
+		if errIntercept != nil {
+			return nil, errIntercept
+		}
+		return marshalRPCResult(resp)
+	case pluginabi.MethodResponseInterceptStreamChunk:
+		if l.active.Capabilities.StreamChunkInterceptor == nil {
+			return nil, fmt.Errorf("missing stream chunk interceptor")
+		}
+		var req pluginapi.StreamChunkInterceptRequest
+		if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
+			return nil, errUnmarshal
+		}
+		resp, errIntercept := l.active.Capabilities.StreamChunkInterceptor.InterceptStreamChunk(ctx, req)
+		if errIntercept != nil {
+			return nil, errIntercept
+		}
+		return marshalRPCResult(resp)
+	case pluginabi.MethodAuthIdentifier:
+		if l.active.Capabilities.AuthProvider == nil {
+			return nil, fmt.Errorf("missing auth provider")
+		}
+		return marshalRPCResult(rpcIdentifierResponse{Identifier: l.active.Capabilities.AuthProvider.Identifier()})
+	case pluginabi.MethodSchedulerPick:
+		if l.active.Capabilities.Scheduler == nil {
+			return nil, fmt.Errorf("missing scheduler")
+		}
+		var req pluginapi.SchedulerPickRequest
+		if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
+			return nil, errUnmarshal
+		}
+		resp, errPick := l.active.Capabilities.Scheduler.Pick(ctx, req)
+		if errPick != nil {
+			return nil, errPick
+		}
+		return marshalRPCResult(resp)
+	case pluginabi.MethodUsageHandle:
+		if l.active.Capabilities.UsagePlugin == nil {
+			return marshalRPCResult(rpcEmptyResponse{})
+		}
+		var record pluginapi.UsageRecord
+		if errUnmarshal := json.Unmarshal(request, &record); errUnmarshal != nil {
+			return nil, errUnmarshal
+		}
+		l.active.Capabilities.UsagePlugin.HandleUsage(ctx, record)
+		return marshalRPCResult(rpcEmptyResponse{})
+	default:
+		return nil, fmt.Errorf("missing test method %s", method)
 	}
 }
 
-func (l *testSymbolLookup) Lookup(name string) (any, error) {
-	symbol, ok := l.symbols[name]
-	if !ok {
-		return nil, fmt.Errorf("missing symbol %s", name)
+func (l *testSymbolLookup) Shutdown() {}
+
+func (l *testSymbolLookup) callLifecycle(request []byte, reload bool) ([]byte, error) {
+	var req rpcLifecycleRequest
+	if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
+		return nil, errUnmarshal
 	}
-	return symbol, nil
+	var plugin pluginapi.Plugin
+	if reload {
+		if l.reconfigureOverride != nil {
+			plugin = l.reconfigureOverride(req.ConfigYAML)
+		} else {
+			plugin = l.plugin.Reconfigure(req.ConfigYAML)
+		}
+	} else {
+		if l.registerOverride != nil {
+			plugin = l.registerOverride(req.ConfigYAML)
+		} else {
+			plugin = l.plugin.Register(req.ConfigYAML)
+		}
+	}
+	l.active = plugin
+	return marshalRPCResult(rpcRegistration{
+		SchemaVersion: pluginabi.SchemaVersion,
+		Metadata:      plugin.Metadata,
+		Capabilities:  rpcCapabilitiesFromPlugin(plugin),
+	})
 }
 
 type testPlugin struct {
@@ -116,6 +242,50 @@ func (c testThinkingCapability) ApplyThinking(ctx context.Context, req pluginapi
 	return pluginapi.PayloadResponse{Body: out}, nil
 }
 
+type requestInterceptorFunc func(context.Context, pluginapi.RequestInterceptRequest) (pluginapi.RequestInterceptResponse, error)
+
+func (f requestInterceptorFunc) InterceptRequestBeforeAuth(ctx context.Context, req pluginapi.RequestInterceptRequest) (pluginapi.RequestInterceptResponse, error) {
+	if f == nil {
+		return pluginapi.RequestInterceptResponse{}, fmt.Errorf("missing request interceptor callback")
+	}
+	return f(ctx, req)
+}
+
+func (f requestInterceptorFunc) InterceptRequestAfterAuth(ctx context.Context, req pluginapi.RequestInterceptRequest) (pluginapi.RequestInterceptResponse, error) {
+	if f == nil {
+		return pluginapi.RequestInterceptResponse{}, fmt.Errorf("missing request interceptor callback")
+	}
+	return f(ctx, req)
+}
+
+type schedulerFunc func(context.Context, pluginapi.SchedulerPickRequest) (pluginapi.SchedulerPickResponse, error)
+
+func (f schedulerFunc) Pick(ctx context.Context, req pluginapi.SchedulerPickRequest) (pluginapi.SchedulerPickResponse, error) {
+	if f == nil {
+		return pluginapi.SchedulerPickResponse{}, fmt.Errorf("missing scheduler callback")
+	}
+	return f(ctx, req)
+}
+
+type responseInterceptorFunc struct {
+	interceptResponse    func(context.Context, pluginapi.ResponseInterceptRequest) (pluginapi.ResponseInterceptResponse, error)
+	interceptStreamChunk func(context.Context, pluginapi.StreamChunkInterceptRequest) (pluginapi.StreamChunkInterceptResponse, error)
+}
+
+func (f responseInterceptorFunc) InterceptResponse(ctx context.Context, req pluginapi.ResponseInterceptRequest) (pluginapi.ResponseInterceptResponse, error) {
+	if f.interceptResponse == nil {
+		return pluginapi.ResponseInterceptResponse{}, fmt.Errorf("missing response interceptor callback")
+	}
+	return f.interceptResponse(ctx, req)
+}
+
+func (f responseInterceptorFunc) InterceptStreamChunk(ctx context.Context, req pluginapi.StreamChunkInterceptRequest) (pluginapi.StreamChunkInterceptResponse, error) {
+	if f.interceptStreamChunk == nil {
+		return pluginapi.StreamChunkInterceptResponse{}, fmt.Errorf("missing stream chunk interceptor callback")
+	}
+	return f.interceptStreamChunk(ctx, req)
+}
+
 func makePluginDir(t *testing.T, ids ...string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -124,7 +294,7 @@ func makePluginDir(t *testing.T, ids ...string) string {
 		t.Fatalf("MkdirAll() error = %v", errMkdirAll)
 	}
 	for _, id := range ids {
-		path := filepath.Join(archDir, id+".so")
+		path := filepath.Join(archDir, id+pluginExtension(runtime.GOOS))
 		if errWriteFile := os.WriteFile(path, []byte("x"), 0o644); errWriteFile != nil {
 			t.Fatalf("WriteFile(%s) error = %v", path, errWriteFile)
 		}

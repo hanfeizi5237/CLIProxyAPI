@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	_ "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator/builtin"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -69,6 +71,54 @@ func executorScopeAllowsOAuthModels(caps pluginapi.Capabilities) bool {
 	}
 	scope := normalizedExecutorModelScope(caps)
 	return scope == pluginapi.ExecutorModelScopeOAuth || scope == pluginapi.ExecutorModelScopeBoth
+}
+
+func normalizeExecutorFormats(raw []string) []sdktranslator.Format {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]sdktranslator.Format, 0, len(raw))
+	seen := make(map[string]struct{}, len(raw))
+	for _, item := range raw {
+		format := normalizeExecutorFormatName(item)
+		if format == "" {
+			continue
+		}
+		key := format.String()
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, format)
+	}
+	return out
+}
+
+func normalizeExecutorFormatName(raw string) sdktranslator.Format {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "none":
+		return ""
+	case "chat-completions", "chat_completions", "openai-chat-completions", "openai_chat_completions":
+		return sdktranslator.FormatOpenAI
+	case "responses", "openai-responses", "openai_responses":
+		return sdktranslator.FormatOpenAIResponse
+	case "anthropic":
+		return sdktranslator.FormatClaude
+	default:
+		return sdktranslator.FromString(strings.TrimSpace(raw))
+	}
+}
+
+func executorFormatContains(formats []sdktranslator.Format, target sdktranslator.Format) bool {
+	if target == "" {
+		return false
+	}
+	for _, format := range formats {
+		if format == target {
+			return true
+		}
+	}
+	return false
 }
 
 type AuthModelResult struct {
@@ -461,6 +511,189 @@ func (h *Host) callModelsForAuth(ctx context.Context, record capabilityRecord, p
 	})
 }
 
+func (h *Host) callRequestInterceptor(ctx context.Context, pluginID, method string, call func(context.Context, pluginapi.RequestInterceptRequest) (pluginapi.RequestInterceptResponse, error), req pluginapi.RequestInterceptRequest) (out pluginapi.RequestInterceptResponse, ok bool) {
+	if h == nil || call == nil || h.isPluginFused(pluginID) {
+		return pluginapi.RequestInterceptResponse{}, false
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			h.fusePlugin(pluginID, method, recovered)
+			out = pluginapi.RequestInterceptResponse{}
+			ok = false
+		}
+	}()
+	resp, errIntercept := call(ctx, req)
+	if errIntercept != nil {
+		log.Warnf("pluginhost: request interceptor %s failed: %v", pluginID, errIntercept)
+		return pluginapi.RequestInterceptResponse{}, false
+	}
+	return resp, true
+}
+
+func (h *Host) callResponseInterceptor(ctx context.Context, pluginID string, interceptor pluginapi.ResponseInterceptor, req pluginapi.ResponseInterceptRequest) (out pluginapi.ResponseInterceptResponse, ok bool) {
+	if h == nil || interceptor == nil || h.isPluginFused(pluginID) {
+		return pluginapi.ResponseInterceptResponse{}, false
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			h.fusePlugin(pluginID, "ResponseInterceptor.InterceptResponse", recovered)
+			out = pluginapi.ResponseInterceptResponse{}
+			ok = false
+		}
+	}()
+	resp, errIntercept := interceptor.InterceptResponse(ctx, req)
+	if errIntercept != nil {
+		log.Warnf("pluginhost: response interceptor %s failed: %v", pluginID, errIntercept)
+		return pluginapi.ResponseInterceptResponse{}, false
+	}
+	return resp, true
+}
+
+func (h *Host) callStreamChunkInterceptor(ctx context.Context, pluginID string, interceptor pluginapi.StreamChunkInterceptor, req pluginapi.StreamChunkInterceptRequest) (out pluginapi.StreamChunkInterceptResponse, ok bool) {
+	if h == nil || interceptor == nil || h.isPluginFused(pluginID) {
+		return pluginapi.StreamChunkInterceptResponse{}, false
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			h.fusePlugin(pluginID, "StreamChunkInterceptor.InterceptStreamChunk", recovered)
+			out = pluginapi.StreamChunkInterceptResponse{}
+			ok = false
+		}
+	}()
+	resp, errIntercept := interceptor.InterceptStreamChunk(ctx, req)
+	if errIntercept != nil {
+		log.Warnf("pluginhost: stream chunk interceptor %s failed: %v", pluginID, errIntercept)
+		return pluginapi.StreamChunkInterceptResponse{}, false
+	}
+	return resp, true
+}
+
+func (h *Host) InterceptRequestBeforeAuth(ctx context.Context, req pluginapi.RequestInterceptRequest) pluginapi.RequestInterceptResponse {
+	return h.interceptRequest(ctx, req, "RequestInterceptor.InterceptRequestBeforeAuth", func(interceptor pluginapi.RequestInterceptor, ctx context.Context, req pluginapi.RequestInterceptRequest) (pluginapi.RequestInterceptResponse, error) {
+		return interceptor.InterceptRequestBeforeAuth(ctx, req)
+	})
+}
+
+func (h *Host) InterceptRequestAfterAuth(ctx context.Context, req pluginapi.RequestInterceptRequest) pluginapi.RequestInterceptResponse {
+	return h.interceptRequest(ctx, req, "RequestInterceptor.InterceptRequestAfterAuth", func(interceptor pluginapi.RequestInterceptor, ctx context.Context, req pluginapi.RequestInterceptRequest) (pluginapi.RequestInterceptResponse, error) {
+		return interceptor.InterceptRequestAfterAuth(ctx, req)
+	})
+}
+
+func (h *Host) interceptRequest(ctx context.Context, req pluginapi.RequestInterceptRequest, method string, invoke func(pluginapi.RequestInterceptor, context.Context, pluginapi.RequestInterceptRequest) (pluginapi.RequestInterceptResponse, error)) pluginapi.RequestInterceptResponse {
+	current := pluginapi.RequestInterceptResponse{
+		Headers: cloneHeader(req.Headers),
+		Body:    bytes.Clone(req.Body),
+	}
+	for _, record := range h.Snapshot().records {
+		interceptor := record.plugin.Capabilities.RequestInterceptor
+		if h.isPluginFused(record.id) || interceptor == nil {
+			continue
+		}
+		nextReq := req
+		nextReq.Headers = cloneHeader(current.Headers)
+		nextReq.Body = bytes.Clone(current.Body)
+		nextReq.Metadata = cloneInterceptorMetadata(req.Metadata)
+		if resp, ok := h.callRequestInterceptor(ctx, record.id, method, func(callCtx context.Context, callReq pluginapi.RequestInterceptRequest) (pluginapi.RequestInterceptResponse, error) {
+			return invoke(interceptor, callCtx, callReq)
+		}, nextReq); ok {
+			current.Headers = mergeHeaders(current.Headers, resp.Headers, resp.ClearHeaders)
+			if len(resp.Body) > 0 {
+				current.Body = bytes.Clone(resp.Body)
+			}
+		}
+	}
+	return current
+}
+
+func (h *Host) InterceptResponse(ctx context.Context, req pluginapi.ResponseInterceptRequest) pluginapi.ResponseInterceptResponse {
+	current := pluginapi.ResponseInterceptResponse{
+		Headers: cloneHeader(req.ResponseHeaders),
+		Body:    bytes.Clone(req.Body),
+	}
+	for _, record := range h.Snapshot().records {
+		interceptor := record.plugin.Capabilities.ResponseInterceptor
+		if h.isPluginFused(record.id) || interceptor == nil {
+			continue
+		}
+		nextReq := req
+		nextReq.RequestHeaders = cloneHeader(req.RequestHeaders)
+		nextReq.ResponseHeaders = cloneHeader(current.Headers)
+		nextReq.OriginalRequest = bytes.Clone(req.OriginalRequest)
+		nextReq.RequestBody = bytes.Clone(req.RequestBody)
+		nextReq.Body = bytes.Clone(current.Body)
+		nextReq.Metadata = cloneInterceptorMetadata(req.Metadata)
+		if resp, ok := h.callResponseInterceptor(ctx, record.id, interceptor, nextReq); ok {
+			current.Headers = mergeHeaders(current.Headers, resp.Headers, resp.ClearHeaders)
+			if len(resp.Body) > 0 {
+				current.Body = bytes.Clone(resp.Body)
+			}
+		}
+	}
+	return current
+}
+
+func (h *Host) InterceptStreamChunk(ctx context.Context, req pluginapi.StreamChunkInterceptRequest) pluginapi.StreamChunkInterceptResponse {
+	current := pluginapi.StreamChunkInterceptResponse{
+		Headers: cloneHeader(req.ResponseHeaders),
+		Body:    bytes.Clone(req.Body),
+	}
+	for _, record := range h.Snapshot().records {
+		interceptor := record.plugin.Capabilities.StreamChunkInterceptor
+		if h.isPluginFused(record.id) || interceptor == nil || current.DropChunk {
+			continue
+		}
+		nextReq := req
+		nextReq.RequestHeaders = cloneHeader(req.RequestHeaders)
+		nextReq.ResponseHeaders = cloneHeader(current.Headers)
+		nextReq.OriginalRequest = bytes.Clone(req.OriginalRequest)
+		nextReq.RequestBody = bytes.Clone(req.RequestBody)
+		nextReq.Body = bytes.Clone(current.Body)
+		nextReq.HistoryChunks = cloneByteSlices(req.HistoryChunks)
+		nextReq.Metadata = cloneInterceptorMetadata(req.Metadata)
+		if resp, ok := h.callStreamChunkInterceptor(ctx, record.id, interceptor, nextReq); ok {
+			current.Headers = mergeHeaders(current.Headers, resp.Headers, resp.ClearHeaders)
+			if len(resp.Body) > 0 {
+				current.Body = bytes.Clone(resp.Body)
+			}
+			if resp.DropChunk {
+				current.DropChunk = true
+			}
+		}
+	}
+	return current
+}
+
+func (h *Host) HasStreamInterceptors() bool {
+	if h == nil {
+		return false
+	}
+	for _, record := range h.Snapshot().records {
+		if h.isPluginFused(record.id) {
+			continue
+		}
+		if record.plugin.Capabilities.StreamChunkInterceptor != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Host) HasRequestInterceptors() bool {
+	if h == nil {
+		return false
+	}
+	for _, record := range h.Snapshot().records {
+		if h.isPluginFused(record.id) {
+			continue
+		}
+		if record.plugin.Capabilities.RequestInterceptor != nil {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Host) commitModelClients(snap *Snapshot, modelRegistry modelRegistry, registrations []modelClientRegistration, nextClients map[string]struct{}, nextProviders map[string]string, nextModelRegistrations map[string]pluginModelRegistration) {
 	if h == nil || modelRegistry == nil {
 		return
@@ -665,10 +898,12 @@ func newExecutorAdapterRegistration(h *Host, record capabilityRecord, provider s
 	return executorRegistration{
 		provider: provider,
 		adapter: &executorAdapter{
-			host:     h,
-			pluginID: record.id,
-			provider: provider,
-			executor: executor,
+			host:          h,
+			pluginID:      record.id,
+			provider:      provider,
+			executor:      executor,
+			inputFormats:  normalizeExecutorFormats(record.plugin.Capabilities.ExecutorInputFormats),
+			outputFormats: normalizeExecutorFormats(record.plugin.Capabilities.ExecutorOutputFormats),
 		},
 	}
 }
@@ -831,7 +1066,14 @@ func (h *Host) RegisterFrontendAuthProviders() {
 		return
 	}
 
+	type exclusiveFrontendAuthCandidate struct {
+		key      string
+		pluginID string
+		priority int
+	}
+
 	nextKeys := make(map[string]struct{})
+	var bestExclusive exclusiveFrontendAuthCandidate
 	for _, record := range h.Snapshot().records {
 		provider := record.plugin.Capabilities.FrontendAuthProvider
 		if provider == nil || h.isPluginFused(record.id) {
@@ -848,8 +1090,25 @@ func (h *Host) RegisterFrontendAuthProviders() {
 		}
 		sdkaccess.RegisterProvider(key, adapter)
 		nextKeys[key] = struct{}{}
+		if record.plugin.Capabilities.FrontendAuthProviderExclusive {
+			candidate := exclusiveFrontendAuthCandidate{
+				key:      key,
+				pluginID: record.id,
+				priority: record.priority,
+			}
+			if bestExclusive.key == "" ||
+				candidate.priority > bestExclusive.priority ||
+				(candidate.priority == bestExclusive.priority && candidate.pluginID < bestExclusive.pluginID) {
+				bestExclusive = candidate
+			}
+		}
 	}
 
+	if bestExclusive.key != "" {
+		sdkaccess.SetExclusiveProvider(bestExclusive.key)
+	} else {
+		sdkaccess.ClearExclusiveProvider()
+	}
 	h.pruneStaleAccessProviders(nextKeys)
 }
 
@@ -1030,10 +1289,12 @@ func (a *accessAdapter) Authenticate(ctx context.Context, r *http.Request) (resu
 }
 
 type executorAdapter struct {
-	host     *Host
-	pluginID string
-	provider string
-	executor pluginapi.ProviderExecutor
+	host          *Host
+	pluginID      string
+	provider      string
+	executor      pluginapi.ProviderExecutor
+	inputFormats  []sdktranslator.Format
+	outputFormats []sdktranslator.Format
 }
 
 func (a *executorAdapter) Identifier() string {
@@ -1041,6 +1302,220 @@ func (a *executorAdapter) Identifier() string {
 		return ""
 	}
 	return a.provider
+}
+
+type preparedExecutorCall struct {
+	req             coreexecutor.Request
+	opts            coreexecutor.Options
+	requestedFormat sdktranslator.Format
+	inputFormat     sdktranslator.Format
+	outputFormat    sdktranslator.Format
+}
+
+func (a *executorAdapter) prepareExecutorCall(req coreexecutor.Request, opts coreexecutor.Options) (preparedExecutorCall, error) {
+	requestedFormat := executorRequestedFormat(req, opts)
+	inputFormat, errInput := a.selectExecutorInputFormat(requestedFormat)
+	if errInput != nil {
+		return preparedExecutorCall{}, errInput
+	}
+	outputFormat, errOutput := a.selectExecutorOutputFormat(requestedFormat, inputFormat)
+	if errOutput != nil {
+		return preparedExecutorCall{}, errOutput
+	}
+
+	nativeReq := req
+	nativeOpts := opts
+	if requestedFormat != "" && requestedFormat != inputFormat {
+		nativeReq.Payload = sdktranslator.TranslateRequest(requestedFormat, inputFormat, req.Model, req.Payload, opts.Stream)
+	}
+	nativeReq.Format = outputFormat
+	nativeOpts.SourceFormat = inputFormat
+
+	return preparedExecutorCall{
+		req:             nativeReq,
+		opts:            nativeOpts,
+		requestedFormat: requestedFormat,
+		inputFormat:     inputFormat,
+		outputFormat:    outputFormat,
+	}, nil
+}
+
+func (a *executorAdapter) RequestToFormat(req coreexecutor.Request, opts coreexecutor.Options) sdktranslator.Format {
+	if a == nil {
+		return ""
+	}
+	requestedFormat := executorRequestedFormat(req, opts)
+	inputFormat, errInput := a.selectExecutorInputFormat(requestedFormat)
+	if errInput != nil {
+		return ""
+	}
+	return inputFormat
+}
+
+func executorRequestedFormat(req coreexecutor.Request, opts coreexecutor.Options) sdktranslator.Format {
+	if opts.SourceFormat != "" {
+		return normalizeExecutorFormatName(opts.SourceFormat.String())
+	}
+	if req.Format != "" {
+		return normalizeExecutorFormatName(req.Format.String())
+	}
+	return sdktranslator.FormatOpenAI
+}
+
+func (a *executorAdapter) selectExecutorInputFormat(requested sdktranslator.Format) (sdktranslator.Format, error) {
+	if len(a.inputFormats) == 0 {
+		return "", fmt.Errorf("plugin executor %s declares no input formats", a.Identifier())
+	}
+	if executorFormatContains(a.inputFormats, requested) {
+		return requested, nil
+	}
+	for _, format := range a.inputFormats {
+		if requested == "" || sdktranslator.HasRequestTransformer(requested, format) {
+			return format, nil
+		}
+	}
+	return "", fmt.Errorf("plugin executor %s does not support input format %q", a.Identifier(), requested)
+}
+
+func (a *executorAdapter) selectExecutorOutputFormat(requested, inputFormat sdktranslator.Format) (sdktranslator.Format, error) {
+	if len(a.outputFormats) == 0 {
+		return "", fmt.Errorf("plugin executor %s declares no output formats", a.Identifier())
+	}
+	if executorFormatContains(a.outputFormats, requested) {
+		return requested, nil
+	}
+	if executorFormatContains(a.outputFormats, inputFormat) && executorResponseTranslatorExists(inputFormat, requested) {
+		return inputFormat, nil
+	}
+	for _, format := range a.outputFormats {
+		if requested == "" || executorResponseTranslatorExists(format, requested) {
+			return format, nil
+		}
+	}
+	return "", fmt.Errorf("plugin executor %s does not support output format %q", a.Identifier(), requested)
+}
+
+func executorResponseTranslatorExists(from, to sdktranslator.Format) bool {
+	if from == "" || to == "" || from == to {
+		return true
+	}
+	return sdktranslator.HasStreamResponseTransformer(to, from)
+}
+
+func (a *executorAdapter) translateExecutorResponse(ctx context.Context, prepared preparedExecutorCall, payload []byte, stream bool, param *any) []byte {
+	if prepared.requestedFormat == "" || prepared.outputFormat == prepared.requestedFormat {
+		return bytes.Clone(payload)
+	}
+	originalRequest := prepared.opts.OriginalRequest
+	if len(originalRequest) == 0 {
+		originalRequest = prepared.req.Payload
+	}
+	if stream {
+		frames := a.translateExecutorStreamPayload(ctx, prepared, payload, param)
+		if len(frames) == 0 {
+			return nil
+		}
+		if len(frames) == 1 {
+			return bytes.Clone(frames[0])
+		}
+		return bytes.Join(frames, nil)
+	}
+	return sdktranslator.TranslateNonStream(ctx, prepared.outputFormat, prepared.requestedFormat, prepared.req.Model, originalRequest, prepared.req.Payload, payload, param)
+}
+
+func (a *executorAdapter) translateExecutorStreamChunks(ctx context.Context, prepared preparedExecutorCall, in <-chan pluginapi.ExecutorStreamChunk) <-chan pluginapi.ExecutorStreamChunk {
+	if prepared.requestedFormat == "" || prepared.outputFormat == prepared.requestedFormat {
+		return in
+	}
+	if in == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	out := make(chan pluginapi.ExecutorStreamChunk)
+	go func() {
+		defer close(out)
+		var param any
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case chunk, ok := <-in:
+				if !ok {
+					a.emitTranslatedExecutorStreamTail(ctx, prepared, out, &param)
+					return
+				}
+				if chunk.Err != nil {
+					_ = sendExecutorPluginStreamChunk(ctx, out, chunk)
+					continue
+				}
+				frames := a.translateExecutorStreamPayload(ctx, prepared, chunk.Payload, &param)
+				for _, frame := range frames {
+					if !sendExecutorPluginStreamChunk(ctx, out, pluginapi.ExecutorStreamChunk{Payload: frame}) {
+						return
+					}
+				}
+			}
+		}
+	}()
+	return out
+}
+
+func (a *executorAdapter) translateExecutorStreamPayload(ctx context.Context, prepared preparedExecutorCall, payload []byte, param *any) [][]byte {
+	originalRequest := prepared.opts.OriginalRequest
+	if len(originalRequest) == 0 {
+		originalRequest = prepared.req.Payload
+	}
+	frames := sdktranslator.TranslateStream(ctx, prepared.outputFormat, prepared.requestedFormat, prepared.req.Model, originalRequest, prepared.req.Payload, payload, param)
+	if executorStreamTranslationFellBack(prepared, payload, frames) {
+		return nil
+	}
+	return frames
+}
+
+func executorStreamTranslationFellBack(prepared preparedExecutorCall, payload []byte, frames [][]byte) bool {
+	if prepared.requestedFormat == "" || prepared.outputFormat == "" || prepared.outputFormat == prepared.requestedFormat {
+		return false
+	}
+	if len(frames) != 1 || !bytes.Equal(frames[0], payload) {
+		return false
+	}
+	// A plugin executor only reaches this path after host-side response translation
+	// has been selected. An unchanged single frame is the SDK registry fallback,
+	// not a valid translated frame to send to the client.
+	return executorResponseTranslatorExists(prepared.outputFormat, prepared.requestedFormat)
+}
+
+func (a *executorAdapter) emitTranslatedExecutorStreamTail(ctx context.Context, prepared preparedExecutorCall, out chan<- pluginapi.ExecutorStreamChunk, param *any) {
+	tail := executorStreamDonePayload(prepared.outputFormat)
+	if len(tail) == 0 {
+		return
+	}
+	frames := a.translateExecutorStreamPayload(ctx, prepared, tail, param)
+	for _, frame := range frames {
+		if !sendExecutorPluginStreamChunk(ctx, out, pluginapi.ExecutorStreamChunk{Payload: frame}) {
+			return
+		}
+	}
+}
+
+func executorStreamDonePayload(format sdktranslator.Format) []byte {
+	switch format {
+	case sdktranslator.FormatOpenAI:
+		return []byte("data: [DONE]")
+	default:
+		return nil
+	}
+}
+
+func sendExecutorPluginStreamChunk(ctx context.Context, out chan<- pluginapi.ExecutorStreamChunk, chunk pluginapi.ExecutorStreamChunk) bool {
+	select {
+	case out <- pluginapi.ExecutorStreamChunk{Payload: bytes.Clone(chunk.Payload), Err: chunk.Err}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func (a *executorAdapter) Execute(ctx context.Context, auth *coreauth.Auth, req coreexecutor.Request, opts coreexecutor.Options) (resp coreexecutor.Response, err error) {
@@ -1055,12 +1530,16 @@ func (a *executorAdapter) Execute(ctx context.Context, auth *coreauth.Auth, req 
 		}
 	}()
 
-	pluginResp, errExecute := a.executor.Execute(ctx, buildExecutorRequest(a.host, a.provider, auth, req, opts))
+	prepared, errPrepare := a.prepareExecutorCall(req, opts)
+	if errPrepare != nil {
+		return coreexecutor.Response{}, errPrepare
+	}
+	pluginResp, errExecute := a.executor.Execute(ctx, buildExecutorRequest(a.host, a.provider, auth, prepared.req, prepared.opts))
 	if errExecute != nil {
 		return coreexecutor.Response{}, errExecute
 	}
 	return coreexecutor.Response{
-		Payload:  bytes.Clone(pluginResp.Payload),
+		Payload:  a.translateExecutorResponse(ctx, prepared, pluginResp.Payload, false, nil),
 		Metadata: cloneAnyMap(pluginResp.Metadata),
 		Headers:  cloneHeader(pluginResp.Headers),
 	}, nil
@@ -1078,13 +1557,17 @@ func (a *executorAdapter) ExecuteStream(ctx context.Context, auth *coreauth.Auth
 		}
 	}()
 
-	pluginResp, errExecuteStream := a.executor.ExecuteStream(ctx, buildExecutorRequest(a.host, a.provider, auth, req, opts))
+	prepared, errPrepare := a.prepareExecutorCall(req, opts)
+	if errPrepare != nil {
+		return nil, errPrepare
+	}
+	pluginResp, errExecuteStream := a.executor.ExecuteStream(ctx, buildExecutorRequest(a.host, a.provider, auth, prepared.req, prepared.opts))
 	if errExecuteStream != nil {
 		return nil, errExecuteStream
 	}
 	return &coreexecutor.StreamResult{
 		Headers: cloneHeader(pluginResp.Headers),
-		Chunks:  mapExecutorStreamChunks(ctx, pluginResp.Chunks),
+		Chunks:  mapExecutorStreamChunks(ctx, a.translateExecutorStreamChunks(ctx, prepared, pluginResp.Chunks)),
 	}, nil
 }
 
@@ -1173,12 +1656,16 @@ func (a *executorAdapter) CountTokens(ctx context.Context, auth *coreauth.Auth, 
 		}
 	}()
 
-	pluginResp, errCountTokens := a.executor.CountTokens(ctx, buildExecutorRequest(a.host, a.provider, auth, req, opts))
+	prepared, errPrepare := a.prepareExecutorCall(req, opts)
+	if errPrepare != nil {
+		return coreexecutor.Response{}, errPrepare
+	}
+	pluginResp, errCountTokens := a.executor.CountTokens(ctx, buildExecutorRequest(a.host, a.provider, auth, prepared.req, prepared.opts))
 	if errCountTokens != nil {
 		return coreexecutor.Response{}, errCountTokens
 	}
 	return coreexecutor.Response{
-		Payload:  bytes.Clone(pluginResp.Payload),
+		Payload:  a.translateExecutorResponse(ctx, prepared, pluginResp.Payload, false, nil),
 		Metadata: cloneAnyMap(pluginResp.Metadata),
 		Headers:  cloneHeader(pluginResp.Headers),
 	}, nil
@@ -1610,6 +2097,34 @@ func cloneHeader(in http.Header) http.Header {
 	return out
 }
 
+func mergeHeaders(current, updates http.Header, clear []string) http.Header {
+	out := cloneHeader(current)
+	if out == nil {
+		out = make(http.Header)
+	}
+	for _, key := range clear {
+		out.Del(key)
+	}
+	for key, values := range updates {
+		out.Del(key)
+		for _, value := range values {
+			out.Add(key, value)
+		}
+	}
+	return out
+}
+
+func cloneByteSlices(in [][]byte) [][]byte {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([][]byte, 0, len(in))
+	for _, item := range in {
+		out = append(out, bytes.Clone(item))
+	}
+	return out
+}
+
 func cloneValues(in url.Values) url.Values {
 	if len(in) == 0 {
 		return nil
@@ -1630,6 +2145,146 @@ func cloneAnyMap(in map[string]any) map[string]any {
 		out[key] = value
 	}
 	return out
+}
+
+func cloneInterceptorMetadata(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	visited := make(map[metadataCloneVisit]reflect.Value)
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = cloneInterceptorMetadataAny(reflect.ValueOf(value), visited)
+	}
+	return out
+}
+
+type metadataCloneVisit struct {
+	typ reflect.Type
+	ptr uintptr
+}
+
+func cloneInterceptorMetadataAny(value reflect.Value, visited map[metadataCloneVisit]reflect.Value) any {
+	cloned := cloneInterceptorMetadataReflectValue(value, visited)
+	if !cloned.IsValid() {
+		return nil
+	}
+	return cloned.Interface()
+}
+
+func cloneInterceptorMetadataReflectValue(value reflect.Value, visited map[metadataCloneVisit]reflect.Value) reflect.Value {
+	if !value.IsValid() {
+		return reflect.Value{}
+	}
+
+	switch value.Kind() {
+	case reflect.Interface:
+		if value.IsNil() {
+			return reflect.Zero(value.Type())
+		}
+		return cloneInterceptorMetadataReflectValue(value.Elem(), visited)
+	case reflect.Pointer:
+		if value.IsNil() {
+			return reflect.Zero(value.Type())
+		}
+		visit := metadataCloneVisit{typ: value.Type(), ptr: value.Pointer()}
+		if existing, okExisting := visited[visit]; okExisting {
+			return existing
+		}
+		out := reflect.New(value.Type().Elem())
+		visited[visit] = out
+		clonedElem := cloneInterceptorMetadataReflectValue(value.Elem(), visited)
+		if clonedElem.IsValid() {
+			outElem := out.Elem()
+			if clonedElem.Type().AssignableTo(outElem.Type()) {
+				outElem.Set(clonedElem)
+			} else if clonedElem.Type().ConvertibleTo(outElem.Type()) {
+				outElem.Set(clonedElem.Convert(outElem.Type()))
+			}
+		}
+		return out
+	case reflect.Map:
+		if value.IsNil() {
+			return reflect.Zero(value.Type())
+		}
+		visit := metadataCloneVisit{typ: value.Type(), ptr: value.Pointer()}
+		if existing, okExisting := visited[visit]; okExisting {
+			return existing
+		}
+		out := reflect.MakeMapWithSize(value.Type(), value.Len())
+		visited[visit] = out
+		iter := value.MapRange()
+		for iter.Next() {
+			keyValue := adaptClonedValue(iter.Key(), cloneInterceptorMetadataReflectValue(iter.Key(), visited))
+			valValue := adaptClonedValue(iter.Value(), cloneInterceptorMetadataReflectValue(iter.Value(), visited))
+			out.SetMapIndex(keyValue, valValue)
+		}
+		return out
+	case reflect.Slice:
+		if value.IsNil() {
+			return reflect.Zero(value.Type())
+		}
+		if value.Type().Elem().Kind() == reflect.Uint8 {
+			out := reflect.MakeSlice(value.Type(), value.Len(), value.Len())
+			reflect.Copy(out, value)
+			return out
+		}
+		visit := metadataCloneVisit{typ: value.Type(), ptr: value.Pointer()}
+		if existing, okExisting := visited[visit]; okExisting {
+			return existing
+		}
+		out := reflect.MakeSlice(value.Type(), value.Len(), value.Len())
+		visited[visit] = out
+		for i := 0; i < value.Len(); i++ {
+			clonedItem := cloneInterceptorMetadataReflectValue(value.Index(i), visited)
+			if !clonedItem.IsValid() {
+				continue
+			}
+			out.Index(i).Set(adaptClonedValue(value.Index(i), clonedItem))
+		}
+		return out
+	case reflect.Array:
+		out := reflect.New(value.Type()).Elem()
+		for i := 0; i < value.Len(); i++ {
+			clonedItem := cloneInterceptorMetadataReflectValue(value.Index(i), visited)
+			if !clonedItem.IsValid() {
+				continue
+			}
+			out.Index(i).Set(adaptClonedValue(value.Index(i), clonedItem))
+		}
+		return out
+	case reflect.Struct:
+		out := reflect.New(value.Type()).Elem()
+		// Preserve unexported fields and deep-clone exported fields on a best-effort basis.
+		out.Set(value)
+		for i := 0; i < value.NumField(); i++ {
+			field := value.Field(i)
+			if !out.Field(i).CanSet() {
+				continue
+			}
+			fieldClone := cloneInterceptorMetadataReflectValue(field, visited)
+			if !fieldClone.IsValid() {
+				continue
+			}
+			out.Field(i).Set(adaptClonedValue(field, fieldClone))
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func adaptClonedValue(original, cloned reflect.Value) reflect.Value {
+	if !cloned.IsValid() {
+		return original
+	}
+	if cloned.Type().AssignableTo(original.Type()) {
+		return cloned
+	}
+	if cloned.Type().ConvertibleTo(original.Type()) {
+		return cloned.Convert(original.Type())
+	}
+	return original
 }
 
 func cloneStringMap(in map[string]string) map[string]string {

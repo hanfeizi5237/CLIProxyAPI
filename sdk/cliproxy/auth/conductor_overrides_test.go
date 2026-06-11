@@ -11,6 +11,7 @@ import (
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 )
 
 const requestScopedNotFoundMessage = "Item with id 'rs_0b5f3eb6f51f175c0169ca74e4a85881998539920821603a74' not found. Items are not persisted when `store` is set to false. Try again with `store` set to true, or remove this item from your input."
@@ -105,6 +106,30 @@ func TestManager_ShouldRetryAfterError_UsesOAuthModelAliasForCooldown(t *testing
 	}
 	if wait <= 0 {
 		t.Fatalf("expected wait > 0, got %v", wait)
+	}
+}
+
+func TestRequestToFormat_UsesSelectedAuthRequestModeForCodex(t *testing.T) {
+	got := requestToFormat("codex", nil, &Auth{
+		Provider:   "codex",
+		Attributes: map[string]string{"request_mode": "chat"},
+	}, cliproxyexecutor.Request{Model: "gpt-5.4"}, cliproxyexecutor.Options{
+		SourceFormat: sdktranslator.FormatOpenAIResponse,
+	})
+	if got != sdktranslator.FormatOpenAI {
+		t.Fatalf("got %q, want %q", got, sdktranslator.FormatOpenAI)
+	}
+}
+
+func TestRequestToFormat_UsesSelectedAuthRequestModeForXAI(t *testing.T) {
+	got := requestToFormat("xai", nil, &Auth{
+		Provider:   "xai",
+		Attributes: map[string]string{"request_mode": "chat"},
+	}, cliproxyexecutor.Request{Model: "grok-4.3"}, cliproxyexecutor.Options{
+		SourceFormat: sdktranslator.FormatOpenAIResponse,
+	})
+	if got != sdktranslator.FormatOpenAI {
+		t.Fatalf("got %q, want %q", got, sdktranslator.FormatOpenAI)
 	}
 }
 
