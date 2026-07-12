@@ -27,6 +27,7 @@ var codexClientAllowedReasoningLevels = map[string]struct{}{
 	"high":   {},
 	"xhigh":  {},
 	"max":    {},
+	"ultra":  {},
 }
 
 func (h *OpenAIAPIHandler) codexClientModelsResponse() map[string]any {
@@ -54,6 +55,7 @@ func buildCodexClientModels(models []map[string]any) []map[string]any {
 
 		if template, ok := templates[id]; ok {
 			entry := cloneCodexClientModelMap(template)
+			applyCodexClientDisplayName(entry, model)
 			sanitizeCodexClientReasoningMetadata(entry)
 			applyCodexClientVisibilityOverride(entry, id)
 			result = append(result, entry)
@@ -154,6 +156,12 @@ func loadCodexClientModelTemplates() (map[string]map[string]any, map[string]any,
 	return codexClientModelTemplates, codexClientDefaultTemplate, codexClientModelTemplatesErr
 }
 
+func applyCodexClientDisplayName(entry map[string]any, model map[string]any) {
+	if displayName := stringModelValue(model, "display_name"); displayName != "" {
+		entry["display_name"] = displayName
+	}
+}
+
 func applyCodexClientModelMetadata(entry map[string]any, id string, model map[string]any) {
 	info := registry.LookupModelInfo(id)
 
@@ -173,6 +181,10 @@ func applyCodexClientModelMetadata(entry map[string]any, id string, model map[st
 		}
 		if info.Type == registry.OpenAIImageModelType {
 			entry["visibility"] = "hide"
+			delete(entry, "input_modalities")
+			delete(entry, "supports_image_detail_original")
+		} else {
+			applyCodexClientInputModalitiesMetadata(entry, info.SupportedInputModalities)
 		}
 		applyCodexClientThinkingMetadata(entry, info.Thinking)
 	}
@@ -210,6 +222,38 @@ func applyCodexClientVisibilityOverride(entry map[string]any, id string) {
 	switch strings.TrimSpace(id) {
 	case "grok-imagine-image-quality", "gpt-image-1.5", "gpt-image-2", "grok-imagine-image", "grok-imagine-video", "grok-imagine-video-1.5-preview":
 		entry["visibility"] = "hide"
+	}
+}
+
+func applyCodexClientInputModalitiesMetadata(entry map[string]any, modalities []string) {
+	if len(modalities) == 0 {
+		return
+	}
+	// Codex client only accepts text/image input modalities.
+	codexModalities := make([]any, 0, 2)
+	seen := make(map[string]struct{}, 2)
+	supportsImage := false
+	for _, raw := range modalities {
+		switch modality := strings.ToLower(strings.TrimSpace(raw)); modality {
+		case "text", "image":
+			if _, ok := seen[modality]; ok {
+				continue
+			}
+			seen[modality] = struct{}{}
+			codexModalities = append(codexModalities, modality)
+			if modality == "image" {
+				supportsImage = true
+			}
+		}
+	}
+	if len(codexModalities) == 0 {
+		return
+	}
+	entry["input_modalities"] = codexModalities
+	if supportsImage {
+		entry["supports_image_detail_original"] = true
+	} else {
+		delete(entry, "supports_image_detail_original")
 	}
 }
 
