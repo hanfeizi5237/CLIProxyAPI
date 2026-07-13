@@ -1396,8 +1396,8 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 						chunkIndex++
 					}
 					sentPayload = true
-                    payload = restoreClientVisibleModel(payload, modelName)
-                    if responseProtocol == "openai-response" {
+					payload = restoreClientVisibleModel(payload, modelName)
+					if responseProtocol == "openai-response" {
 						if errValidate := validateSSEDataJSON(payload); errValidate != nil {
 							_ = sendErr(&interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: errValidate})
 							return

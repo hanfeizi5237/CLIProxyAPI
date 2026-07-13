@@ -472,10 +472,9 @@ func xaiBuildSSEFrame(eventName string, data []byte) []byte {
 }
 
 func (e *XAIExecutor) executeChatMode(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
-	token, baseURL := xaiCreds(auth)
-	if baseURL == "" {
-		baseURL = xaiauth.DefaultAPIBaseURL
-	}
+	token, _ := xaiCreds(auth)
+	baseURL := xaiChatBaseURL(auth)
+	logXAIResolvedBaseURL(ctx, baseURL)
 
 	prepared, err := e.prepareChatCompletionsRequest(ctx, req, opts, false)
 	if err != nil {
@@ -492,7 +491,7 @@ func (e *XAIExecutor) executeChatMode(ctx context.Context, auth *cliproxyauth.Au
 	if err != nil {
 		return resp, err
 	}
-	applyXAIHeaders(httpReq, auth, token, false, "")
+	applyXAIChatHeaders(httpReq, auth, token, false, "")
 	e.recordXAIRequest(ctx, auth, url, httpReq.Header.Clone(), prepared.body)
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
@@ -516,7 +515,7 @@ func (e *XAIExecutor) executeChatMode(ctx context.Context, auth *cliproxyauth.Au
 		}
 		helps.AppendAPIResponseChunk(ctx, e.cfg, data)
 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), data))
-		return resp, statusErr{code: httpResp.StatusCode, msg: string(data)}
+		return resp, xaiStatusErr(httpResp.StatusCode, data)
 	}
 
 	data, err := io.ReadAll(httpResp.Body)
@@ -799,10 +798,9 @@ func (e *XAIExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth
 }
 
 func (e *XAIExecutor) executeChatModeStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
-	token, baseURL := xaiCreds(auth)
-	if baseURL == "" {
-		baseURL = xaiauth.DefaultAPIBaseURL
-	}
+	token, _ := xaiCreds(auth)
+	baseURL := xaiChatBaseURL(auth)
+	logXAIResolvedBaseURL(ctx, baseURL)
 
 	prepared, err := e.prepareChatCompletionsRequest(ctx, req, opts, true)
 	if err != nil {
@@ -820,7 +818,7 @@ func (e *XAIExecutor) executeChatModeStream(ctx context.Context, auth *cliproxya
 	if err != nil {
 		return nil, err
 	}
-	applyXAIHeaders(httpReq, auth, token, true, "")
+	applyXAIChatHeaders(httpReq, auth, token, true, "")
 	httpReq.Header.Set("Cache-Control", "no-cache")
 	e.recordXAIRequest(ctx, auth, url, httpReq.Header.Clone(), prepared.body)
 
@@ -843,7 +841,7 @@ func (e *XAIExecutor) executeChatModeStream(ctx context.Context, auth *cliproxya
 		}
 		helps.AppendAPIResponseChunk(ctx, e.cfg, data)
 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), data))
-		return nil, statusErr{code: httpResp.StatusCode, msg: string(data)}
+		return nil, xaiStatusErr(httpResp.StatusCode, data)
 	}
 
 	out := make(chan cliproxyexecutor.StreamChunk)

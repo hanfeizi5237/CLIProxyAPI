@@ -875,8 +875,20 @@ func TestModelsWithClientVersionReturnsCodexCatalog(t *testing.T) {
 	if got, _ := custom["display_name"].(string); got != "Custom Codex Model" {
 		t.Fatalf("custom display_name = %q, want Custom Codex Model", got)
 	}
-	if got := int(codexClientTestPriority(custom["priority"])); got != 129 {
-		t.Fatalf("custom priority = %v, want 129", custom["priority"])
+	var catalog struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(registry.GetCodexClientModelsJSON(), &catalog); err != nil {
+		t.Fatalf("failed to parse codex client model catalog: %v", err)
+	}
+	maxTemplatePriority := 0
+	for _, model := range catalog.Models {
+		if priority := codexClientTestPriority(model["priority"]); priority > maxTemplatePriority {
+			maxTemplatePriority = priority
+		}
+	}
+	if got, want := codexClientTestPriority(custom["priority"]), maxTemplatePriority+100; got != want {
+		t.Fatalf("custom priority = %d, want highest template priority + 100 = %d", got, want)
 	}
 	if got, _ := custom["description"].(string); got != "Custom model from registry" {
 		t.Fatalf("custom description = %q, want Custom model from registry", got)
