@@ -30,6 +30,9 @@ auths/*
 
 # Documentation
 docs/*
+!docs/operations/
+!docs/operations/production-deployment.md
+!docs/operations/production-server-inventory.json
 AGENTS.md
 CLAUDE.md
 GEMINI.md
