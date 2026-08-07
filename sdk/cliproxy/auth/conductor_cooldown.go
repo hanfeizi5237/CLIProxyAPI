@@ -732,10 +732,6 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 			}
 		}
 		ignoreVisibleAliasModelFailure := shouldIgnoreVisibleAliasModelFailure(auth, resultModel, normalizedResultModel, result.Error)
-		stateResultModel := resultModel
-		if !ignoreVisibleAliasModelFailure && normalizedResultModel != "" {
-			stateResultModel = normalizedResultModel
-		}
 
 		if result.Success {
 			if modelKey != "" {
@@ -755,8 +751,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 			}
 		} else {
 			if modelKey != "" {
-				if !shouldSkipCredentialCooldown(result.Error)
-				    && !ignoreVisibleAliasModelFailure {
+							if !shouldSkipCredentialCooldown(result.Error) && !ignoreVisibleAliasModelFailure {
 					disableCooling := m.cooldownDisabledForAuth(auth)
 					state := ensureModelState(auth, modelKey)
 					state.Unavailable = true
