@@ -139,18 +139,6 @@ func TestRequestToFormat_UsesSelectedAuthRequestModeForCodex(t *testing.T) {
 	}
 }
 
-func TestRequestToFormat_UsesSelectedAuthRequestModeForXAI(t *testing.T) {
-	got := requestToFormat("xai", nil, &Auth{
-		Provider:   "xai",
-		Attributes: map[string]string{"request_mode": "chat"},
-	}, cliproxyexecutor.Request{Model: "grok-4.3"}, cliproxyexecutor.Options{
-		SourceFormat: sdktranslator.FormatOpenAIResponse,
-	})
-	if got != sdktranslator.FormatOpenAI {
-		t.Fatalf("got %q, want %q", got, sdktranslator.FormatOpenAI)
-	}
-}
-
 type credentialRetryLimitExecutor struct {
 	id string
 

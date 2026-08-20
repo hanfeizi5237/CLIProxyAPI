@@ -28,9 +28,6 @@ func (e *XAIExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req 
 	if xaiIsVideoRequest(opts) {
 		return e.executeVideos(ctx, auth, req, opts)
 	}
-	if e.xaiRequestMode(auth) == "chat" {
-		return e.executeChatMode(ctx, auth, req, opts)
-	}
 
 	token, _ := xaiCreds(auth)
 	baseURL := xaiChatBaseURL(auth)
@@ -46,7 +43,6 @@ func (e *XAIExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req 
 	reporter.SetTranslatedReasoningEffort(prepared.body, e.Identifier())
 
 	url := strings.TrimSuffix(baseURL, "/") + "/responses"
-	e.logXAIDiagnostic(auth, req, opts, prepared, "/responses", true)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(prepared.body))
 	if err != nil {
 		return resp, err

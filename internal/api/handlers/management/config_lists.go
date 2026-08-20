@@ -1500,7 +1500,6 @@ func (h *Handler) PatchXAIKey(c *gin.Context) {
 		Prefix              *string                          `json:"prefix"`
 		BaseURL             *string                          `json:"base-url"`
 		Websockets          *bool                            `json:"websockets"`
-		RequestMode         *string                          `json:"request-mode"`
 		ProxyURL            *string                          `json:"proxy-url"`
 		Models              *[]config.XAIModel               `json:"models"`
 		Headers             *map[string]string               `json:"headers"`
@@ -1569,9 +1568,6 @@ func (h *Handler) PatchXAIKey(c *gin.Context) {
 	}
 	if body.Value.Websockets != nil {
 		entry.Websockets = *body.Value.Websockets
-	}
-	if body.Value.RequestMode != nil {
-		entry.RequestMode = config.NormalizeCodexRequestMode(*body.Value.RequestMode)
 	}
 	if body.Value.ProxyURL != nil {
 		entry.ProxyURL = strings.TrimSpace(*body.Value.ProxyURL)

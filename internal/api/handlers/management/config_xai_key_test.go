@@ -30,7 +30,6 @@ func TestPatchXAIKeyUpdatesExecutionFields(t *testing.T) {
 		"value": {
 			"priority": 7,
 			"websockets": false,
-			"request-mode": "chat",
 			"disable-cooling": true,
 			"request-retry": 0
 		}
@@ -48,9 +47,6 @@ func TestPatchXAIKeyUpdatesExecutionFields(t *testing.T) {
 	}
 	if entry.Websockets {
 		t.Fatal("websockets = true, want false")
-	}
-	if entry.RequestMode != "chat" {
-		t.Fatalf("request-mode = %q, want chat", entry.RequestMode)
 	}
 	if entry.DisableCooling == nil || !*entry.DisableCooling {
 		t.Fatalf("disable-cooling = %v, want true", entry.DisableCooling)

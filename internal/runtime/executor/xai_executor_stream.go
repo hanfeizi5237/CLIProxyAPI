@@ -22,9 +22,6 @@ func (e *XAIExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth
 	if xaiInputHasItemType(req.Payload, "compaction_trigger") {
 		return e.executeCompactionTriggerStream(ctx, auth, req, opts)
 	}
-	if e.xaiRequestMode(auth) == "chat" {
-		return e.executeChatModeStream(ctx, auth, req, opts)
-	}
 
 	token, _ := xaiCreds(auth)
 	baseURL := xaiChatBaseURL(auth)
@@ -40,7 +37,6 @@ func (e *XAIExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth
 	reporter.SetTranslatedReasoningEffort(prepared.body, e.Identifier())
 
 	url := strings.TrimSuffix(baseURL, "/") + "/responses"
-	e.logXAIDiagnostic(auth, req, opts, prepared, "/responses", true)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(prepared.body))
 	if err != nil {
 		return nil, err

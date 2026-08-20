@@ -14,10 +14,6 @@ import (
 
 // CountTokens estimates token count for xAI Responses requests.
 func (e *XAIExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
-	if e.xaiRequestMode(auth) == "chat" {
-		return e.countTokensChatMode(ctx, auth, req, opts)
-	}
-
 	prepared, err := e.prepareResponsesRequest(ctx, req, opts, false)
 	if err != nil {
 		return cliproxyexecutor.Response{}, err

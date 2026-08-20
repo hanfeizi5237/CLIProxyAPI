@@ -221,10 +221,6 @@ func requestToFormat(provider string, executor ProviderExecutor, auth *Auth, req
 			if internalconfig.NormalizeCodexRequestMode(auth.Attributes["request_mode"]) == "chat" {
 				return sdktranslator.FormatOpenAI
 			}
-		case "xai":
-			if strings.EqualFold(strings.TrimSpace(auth.Attributes["request_mode"]), "chat") {
-				return sdktranslator.FormatOpenAI
-			}
 		}
 	}
 	resolver, ok := executor.(requestToFormatResolver)

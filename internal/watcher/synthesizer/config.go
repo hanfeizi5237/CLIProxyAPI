@@ -238,9 +238,12 @@ func (s *ConfigSynthesizer) synthesizeCodexStyleKeys(ctx *SynthesisContext, entr
 		if baseURL != "" {
 			attrs["base_url"] = baseURL
 		}
-		mode := config.NormalizeCodexRequestMode(entry.RequestMode)
-		if mode != "responses" {
-			attrs["request_mode"] = mode
+		mode := "responses"
+		if provider == "codex" {
+			mode = config.NormalizeCodexRequestMode(entry.RequestMode)
+			if mode != "responses" {
+				attrs["request_mode"] = mode
+			}
 		}
 		if entry.Websockets && mode != "chat" {
 			attrs["websockets"] = "true"

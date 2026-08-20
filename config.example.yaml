@@ -420,7 +420,6 @@ nonstream-keepalive-interval: 0
 #           - "rate_limit_exceeded"
 #         action: "continue-and-cooldown"
 #     base-url: "https://api.x.ai/v1" # xAI-compatible Responses API endpoint
-#     request-mode: "responses" # optional: "responses" (default) or "chat"; use "chat" for upstreams that only support /chat/completions
 #     websockets: true # optional: use the xAI upstream websocket transport for downstream websocket requests
 #     headers:
 #       X-Custom-Header: "custom-value"
