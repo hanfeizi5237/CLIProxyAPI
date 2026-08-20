@@ -12,6 +12,8 @@ bin/*
 conv/*
 temp/*
 refs/*
+__pycache__/
+*.pyc
 plugins/*
 examples/plugin/bin/*
 
@@ -50,6 +52,7 @@ AGENTS.override.md
 .agents
 .pi
 .agents/*
+.workbuddy/
 .opencode/*
 .idea/*
 .beads/*
