@@ -148,7 +148,7 @@ func codexWebsocketsEnabled(auth *cliproxyauth.Auth) bool {
 		if errParse == nil {
 			return parsed
 		}
-		default:
+	default:
 	}
 	return false
 }

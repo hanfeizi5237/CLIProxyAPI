@@ -2202,8 +2202,8 @@ func TestXAIExecutorExecuteStreamCompactionTriggerUsesCompactEndpoint(t *testing
 	if !strings.Contains(output, `"type":"compaction"`) || !strings.Contains(output, `"encrypted_content":"opaque"`) {
 		t.Fatalf("compaction output missing from stream: %s", output)
 	}
-	if !strings.Contains(output, `"usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}`) {
-		t.Fatalf("usage missing from completed stream: %s", output)
+	if !strings.Contains(output, `"output_tokens_details":{"reasoning_tokens":0}`) || !strings.Contains(output, `"input_tokens_details":{"cached_tokens":0}`) {
+		t.Fatalf("usage details missing from completed stream: %s", output)
 	}
 }
 
@@ -2432,8 +2432,9 @@ func TestXAIExecutorChatModeRoutesResponsesToChatCompletions(t *testing.T) {
 		Model:   "grok-4.3",
 		Payload: []byte(`{"model":"grok-4.3","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}],"stream":false}`),
 	}, cliproxyexecutor.Options{
-		SourceFormat: sdktranslator.FormatOpenAIResponse,
-		Stream:       false,
+		SourceFormat:   sdktranslator.FormatOpenAIResponse,
+		ResponseFormat: sdktranslator.FormatOpenAI,
+		Stream:         false,
 	})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -2448,8 +2449,8 @@ func TestXAIExecutorChatModeRoutesResponsesToChatCompletions(t *testing.T) {
 	if gjson.GetBytes(gotBody, "input").Exists() {
 		t.Fatalf("unexpected responses input in upstream body: %s", string(gotBody))
 	}
-	if got := gjson.GetBytes(resp.Payload, "object").String(); got != "response" {
-		t.Fatalf("response object = %q, want response; payload=%s", got, string(resp.Payload))
+	if got := gjson.GetBytes(resp.Payload, "object").String(); got != "chat.completion" {
+		t.Fatalf("response object = %q, want chat.completion; payload=%s", got, string(resp.Payload))
 	}
 }
 
@@ -5242,4 +5243,24 @@ func testValidGrokEncryptedContent() string {
 		buf = append(buf, sum[:]...)
 	}
 	return base64.RawStdEncoding.EncodeToString(buf[:256])
+}
+
+func TestXAIPatchCompletedOutput_EnsuresUsageDetails(t *testing.T) {
+	eventData := []byte(`{"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":10,"output_tokens":4,"total_tokens":14}}}`)
+	outputItemsByIndex := make(map[int64][]byte)
+	var outputItemsFallback [][]byte
+
+	got := xaiPatchCompletedOutput(eventData, outputItemsByIndex, outputItemsFallback)
+	if !gjson.GetBytes(got, "response.usage.output_tokens_details").Exists() {
+		t.Fatalf("expected output_tokens_details to exist, got %s", string(got))
+	}
+	if gjson.GetBytes(got, "response.usage.output_tokens_details.reasoning_tokens").Int() != 0 {
+		t.Fatalf("expected reasoning_tokens == 0, got %d", gjson.GetBytes(got, "response.usage.output_tokens_details.reasoning_tokens").Int())
+	}
+	if !gjson.GetBytes(got, "response.usage.input_tokens_details").Exists() {
+		t.Fatalf("expected input_tokens_details to exist, got %s", string(got))
+	}
+	if gjson.GetBytes(got, "response.usage.input_tokens_details.cached_tokens").Int() != 0 {
+		t.Fatalf("expected cached_tokens == 0, got %d", gjson.GetBytes(got, "response.usage.input_tokens_details.cached_tokens").Int())
+	}
 }

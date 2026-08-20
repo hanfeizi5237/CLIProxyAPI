@@ -31,7 +31,7 @@ func (e *XAIExecutor) executeChatMode(ctx context.Context, auth *cliproxyauth.Au
 		return resp, err
 	}
 
-	reporter := helps.NewUsageReporter(ctx, e.Identifier(), prepared.baseModel, auth)
+	reporter := helps.NewExecutorUsageReporter(ctx, e, prepared.baseModel, auth)
 	defer reporter.TrackFailure(ctx, &err)
 	reporter.SetTranslatedReasoningEffort(prepared.body, e.Identifier())
 
@@ -41,7 +41,7 @@ func (e *XAIExecutor) executeChatMode(ctx context.Context, auth *cliproxyauth.Au
 	if err != nil {
 		return resp, err
 	}
-	applyXAIChatHeaders(httpReq, auth, token, false, "")
+	applyXAIChatHeaders(httpReq, auth, token, false, "", opts.Headers)
 	e.recordXAIRequest(ctx, auth, url, httpReq.Header.Clone(), prepared.body)
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
@@ -78,7 +78,7 @@ func (e *XAIExecutor) executeChatMode(ctx context.Context, auth *cliproxyauth.Au
 	reporter.EnsurePublished(ctx)
 
 	var param any
-	out := sdktranslator.TranslateNonStream(ctx, prepared.to, prepared.from, req.Model, prepared.originalPayload, prepared.body, data, &param)
+	out := sdktranslator.TranslateNonStream(ctx, prepared.to, prepared.responseFormat, req.Model, prepared.originalPayload, prepared.body, data, &param)
 	return cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}, nil
 }
 
@@ -95,7 +95,7 @@ func (e *XAIExecutor) executeChatModeStream(ctx context.Context, auth *cliproxya
 	}
 	prepared.body, _ = sjson.SetBytes(prepared.body, "stream_options.include_usage", true)
 
-	reporter := helps.NewUsageReporter(ctx, e.Identifier(), prepared.baseModel, auth)
+	reporter := helps.NewExecutorUsageReporter(ctx, e, prepared.baseModel, auth)
 	defer reporter.TrackFailure(ctx, &err)
 	reporter.SetTranslatedReasoningEffort(prepared.body, e.Identifier())
 
@@ -105,7 +105,7 @@ func (e *XAIExecutor) executeChatModeStream(ctx context.Context, auth *cliproxya
 	if err != nil {
 		return nil, err
 	}
-	applyXAIChatHeaders(httpReq, auth, token, true, "")
+	applyXAIChatHeaders(httpReq, auth, token, true, "", opts.Headers)
 	httpReq.Header.Set("Cache-Control", "no-cache")
 	e.recordXAIRequest(ctx, auth, url, httpReq.Header.Clone(), prepared.body)
 
@@ -171,7 +171,7 @@ func (e *XAIExecutor) executeChatModeStream(ctx context.Context, auth *cliproxya
 				continue
 			}
 
-			chunks := sdktranslator.TranslateStream(ctx, prepared.to, prepared.from, req.Model, prepared.originalPayload, prepared.body, bytes.Clone(trimmedLine), &param)
+			chunks := sdktranslator.TranslateStream(ctx, prepared.to, prepared.responseFormat, req.Model, prepared.originalPayload, prepared.body, bytes.Clone(trimmedLine), &param)
 			for i := range chunks {
 				select {
 				case out <- cliproxyexecutor.StreamChunk{Payload: chunks[i]}:
@@ -217,6 +217,7 @@ func (e *XAIExecutor) countTokensChatMode(ctx context.Context, auth *cliproxyaut
 func (e *XAIExecutor) prepareChatCompletionsRequest(ctx context.Context, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, stream bool) (*xaiPreparedRequest, error) {
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 	from := opts.SourceFormat
+	responseFormat := cliproxyexecutor.ResponseFormatOrSource(opts)
 	to := sdktranslator.FromString("openai")
 	originalPayloadSource := req.Payload
 	if len(opts.OriginalRequest) > 0 {
@@ -243,6 +244,7 @@ func (e *XAIExecutor) prepareChatCompletionsRequest(ctx context.Context, req cli
 	return &xaiPreparedRequest{
 		baseModel:       baseModel,
 		from:            from,
+		responseFormat:  responseFormat,
 		to:              to,
 		originalPayload: originalPayload,
 		body:            body,
