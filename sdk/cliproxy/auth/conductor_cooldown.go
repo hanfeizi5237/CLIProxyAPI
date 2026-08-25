@@ -737,6 +737,9 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 			if normalizedModel := strings.TrimSpace(m.selectionModelForAuth(auth, normalizedResultModel)); normalizedModel != "" {
 				normalizedResultModel = normalizedModel
 			}
+			if normalizedModelKey := canonicalModelKey(normalizedResultModel); normalizedModelKey != "" {
+				modelKey = normalizedModelKey
+			}
 		}
 		ignoreVisibleAliasModelFailure := shouldIgnoreVisibleAliasModelFailure(auth, resultModel, normalizedResultModel, result.Error)
 
@@ -1607,7 +1610,12 @@ func shouldIgnoreVisibleAliasModelFailure(auth *Auth, resultModel, normalizedMod
 	if statusCodeFromResult(err) != http.StatusNotFound {
 		return false
 	}
-	return strings.Contains(strings.ToLower(strings.TrimSpace(err.Message)), "not found")
+	message := strings.ToLower(strings.TrimSpace(err.Message))
+	resultKey = strings.ToLower(resultKey)
+	normalizedKey = strings.ToLower(normalizedKey)
+	return strings.Contains(message, "not found") &&
+		strings.Contains(message, resultKey) &&
+		!strings.Contains(message, normalizedKey)
 }
 
 func isRequestScopedResultError(err *Error) bool {

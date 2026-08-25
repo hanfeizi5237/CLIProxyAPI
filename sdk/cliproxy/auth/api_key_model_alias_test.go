@@ -386,6 +386,53 @@ func TestManager_CodexAPIKeyAliasUsesUpstreamModelForAvailability(t *testing.T) 
 	}
 }
 
+func TestManager_CodexAPIKeyAliasPreservesGenuineUpstreamModelFailure(t *testing.T) {
+	cfg := &internalconfig.Config{
+		CodexKey: []internalconfig.CodexKey{{
+			APIKey: "codex-key-upstream-failure",
+			Models: []internalconfig.CodexModel{{
+				Name:  "qwen3.6-plus",
+				Alias: "gpt-5.4",
+			}},
+		}},
+	}
+
+	mgr := NewManager(nil, nil, nil)
+	mgr.SetConfig(cfg)
+	auth := &Auth{
+		ID:       "codex-upstream-failure",
+		Provider: "codex",
+		Attributes: map[string]string{
+			"api_key": "codex-key-upstream-failure",
+		},
+	}
+	if _, errRegister := mgr.Register(t.Context(), auth); errRegister != nil {
+		t.Fatalf("register auth: %v", errRegister)
+	}
+
+	mgr.MarkResult(t.Context(), Result{
+		AuthID:   auth.ID,
+		Provider: auth.Provider,
+		Model:    "gpt-5.4",
+		Success:  false,
+		Error: &Error{
+			HTTPStatus: http.StatusNotFound,
+			Message:    "model qwen3.6-plus not found",
+		},
+	})
+
+	current, ok := mgr.GetByID(auth.ID)
+	if !ok {
+		t.Fatalf("auth %s not found after mark result", auth.ID)
+	}
+	if blocked, _, _ := isAuthBlockedForModel(current, "qwen3.6-plus", time.Now()); !blocked {
+		t.Fatalf("upstream model failure was not preserved: states=%#v", current.ModelStates)
+	}
+	if _, exists := current.ModelStates[canonicalModelKey("qwen3.6-plus")]; !exists {
+		t.Fatalf("missing upstream model state: %#v", current.ModelStates)
+	}
+}
+
 func TestManager_CodexAPIKeyAliasDoesNotBypassAuthWideCooldown(t *testing.T) {
 	cfg := &internalconfig.Config{
 		CodexKey: []internalconfig.CodexKey{
