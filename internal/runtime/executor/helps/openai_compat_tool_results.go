@@ -11,6 +11,7 @@ import (
 )
 
 const openAIToolResultImageOmittedText = "[image omitted: unsupported by upstream]"
+const openAIToolResultImageRelayNotice = "Images returned by the preceding tool call(s):"
 
 // ShouldNormalizeOpenAIToolResultsForModel reports whether the selected model
 // explicitly excludes image input through its input-modalities configuration.
@@ -36,8 +37,10 @@ func NormalizeOpenAIToolResultsTextOnly(payload []byte) []byte {
 
 	out := payload
 	messageIndex := 0
+	previousRole := ""
 	messages.ForEach(func(_, message gjson.Result) bool {
-		if message.Get("role").String() == "tool" {
+		role := message.Get("role").String()
+		if role == "tool" {
 			content := message.Get("content")
 			if content.Exists() && content.Type != gjson.String {
 				path := fmt.Sprintf("messages.%d.content", messageIndex)
@@ -46,10 +49,37 @@ func NormalizeOpenAIToolResultsTextOnly(payload []byte) []byte {
 				}
 			}
 		}
+		if previousRole == "tool" && isOpenAIToolResultImageRelay(message) {
+			path := fmt.Sprintf("messages.%d.content", messageIndex)
+			if updated, errSet := sjson.SetBytes(out, path, openAIToolResultImageOmittedText); errSet == nil {
+				out = updated
+			}
+		}
+		previousRole = role
 		messageIndex++
 		return true
 	})
 	return out
+}
+
+func isOpenAIToolResultImageRelay(message gjson.Result) bool {
+	content := message.Get("content")
+	if message.Get("role").String() != "user" || !content.IsArray() {
+		return false
+	}
+	first := content.Get("0.text")
+	if first.Type != gjson.String || first.String() != openAIToolResultImageRelayNotice {
+		return false
+	}
+	containsImage := false
+	content.ForEach(func(_, item gjson.Result) bool {
+		if isOpenAIImageToolResultPart(item) {
+			containsImage = true
+			return false
+		}
+		return true
+	})
+	return containsImage
 }
 
 func openAICompatibilityModelExcludesImages(models []config.OpenAICompatibilityModel, model string) (bool, bool) {
