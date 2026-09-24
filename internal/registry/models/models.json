@@ -4052,7 +4052,6 @@
       "object": "model",
       "owned_by": "antigravity",
       "type": "antigravity",
-      "supports_web_search": true,
       "display_name": "Gemini 3.1 Pro (High)",
       "name": "gemini-pro-agent",
       "description": "Gemini 3.1 Pro (High)",
@@ -4076,10 +4075,7 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ],
-      "native_capabilities": {
-        "web_search": true
-      }
+      ]
     },
     {
       "id": "gemini-3.1-pro-low",

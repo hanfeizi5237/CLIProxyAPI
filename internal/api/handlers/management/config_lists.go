@@ -1534,7 +1534,7 @@ func (h *Handler) PatchCodexKey(c *gin.Context) {
 		Weight               json.RawMessage                  `json:"weight"`
 		Prefix               *string                          `json:"prefix"`
 		BaseURL              *string                          `json:"base-url"`
-        RequestMode          *string                          `json:"request-mode"`
+		RequestMode          *string                          `json:"request-mode"`
 		ProxyURL             *string                          `json:"proxy-url"`
 		AlphaSearch          *bool                            `json:"alpha-search"`
 		Models               *[]config.CodexModel             `json:"models"`
