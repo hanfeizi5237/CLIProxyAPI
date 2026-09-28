@@ -2599,7 +2599,8 @@
       ],
       "native_capabilities": {
         "web_search": true
-      }
+      },
+      "support_configuration_update": true
     },
     {
       "id": "gpt-5.5",
@@ -2808,7 +2809,8 @@
       ],
       "native_capabilities": {
         "web_search": true
-      }
+      },
+      "support_configuration_update": true
     },
     {
       "id": "gpt-6-sol",
@@ -2842,7 +2844,8 @@
       ],
       "native_capabilities": {
         "web_search": true
-      }
+      },
+      "support_configuration_update": true
     },
     {
       "id": "gpt-6-luna",
@@ -2876,7 +2879,8 @@
       ],
       "native_capabilities": {
         "web_search": true
-      }
+      },
+      "support_configuration_update": true
     },
     {
       "id": "gpt-5.6-sol",
@@ -3086,7 +3090,8 @@
       ],
       "native_capabilities": {
         "web_search": true
-      }
+      },
+      "support_configuration_update": true
     },
     {
       "id": "gpt-6-sol",
@@ -3120,7 +3125,8 @@
       ],
       "native_capabilities": {
         "web_search": true
-      }
+      },
+      "support_configuration_update": true
     },
     {
       "id": "gpt-6-luna",
@@ -3154,7 +3160,8 @@
       ],
       "native_capabilities": {
         "web_search": true
-      }
+      },
+      "support_configuration_update": true
     },
     {
       "id": "gpt-5.6-sol",
@@ -3364,7 +3371,8 @@
       ],
       "native_capabilities": {
         "web_search": true
-      }
+      },
+      "support_configuration_update": true
     },
     {
       "id": "gpt-6-sol",
@@ -3398,7 +3406,8 @@
       ],
       "native_capabilities": {
         "web_search": true
-      }
+      },
+      "support_configuration_update": true
     },
     {
       "id": "gpt-6-luna",
@@ -3432,7 +3441,8 @@
       ],
       "native_capabilities": {
         "web_search": true
-      }
+      },
+      "support_configuration_update": true
     },
     {
       "id": "gpt-5.6-sol",
@@ -4052,6 +4062,7 @@
       "object": "model",
       "owned_by": "antigravity",
       "type": "antigravity",
+      "supports_web_search": true,
       "display_name": "Gemini 3.1 Pro (High)",
       "name": "gemini-pro-agent",
       "description": "Gemini 3.1 Pro (High)",
@@ -4075,7 +4086,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.1-pro-low",

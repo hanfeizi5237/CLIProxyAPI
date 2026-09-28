@@ -32,9 +32,7 @@ auths/*
 
 # Documentation
 docs/*
-!docs/operations/
-!docs/operations/production-deployment.md
-!docs/operations/production-server-inventory.json
+!docs/management-api-v8.md
 AGENTS.md
 CLAUDE.md
 GEMINI.md
@@ -53,6 +51,9 @@ AGENTS.override.md
 .pi
 .agents/*
 .workbuddy/
+.qoder/
+.github/
+/new-api
 .opencode/*
 .idea/*
 .beads/*
@@ -65,10 +66,6 @@ _bmad-output/*
 # macOS
 .DS_Store
 ._*
-.qoder/
-.github/
-.codex/
-/new-api
 
 # docker
 docker-compose.override.yml
