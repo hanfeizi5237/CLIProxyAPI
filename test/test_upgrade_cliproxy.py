@@ -4,6 +4,8 @@ import signal
 import tempfile
 import unittest
 from collections import namedtuple
+from contextlib import ExitStack
+from unittest import mock
 
 
 REPOSITORY_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -50,6 +52,117 @@ class DeploymentToolTest(unittest.TestCase):
     def test_deploy_requires_explicit_confirmation(self):
         with self.assertRaises(SystemExit):
             MODULE.parse_args(["deploy"])
+
+    def test_prebuilt_requires_exact_commit_and_confirmation(self):
+        commit = "a" * 40
+        args = MODULE.parse_args(
+            ["deploy", "--ref", commit, "--use-prebuilt", "--yes"]
+        )
+        self.assertTrue(args.use_prebuilt)
+        for arguments in (
+            ["deploy", "--ref", commit, "--use-prebuilt"],
+            ["deploy", "--ref", "origin/tech", "--use-prebuilt", "--yes"],
+            ["deploy", "--ref", commit, "--use-prebuilt", "--pull-base", "--yes"],
+        ):
+            with self.assertRaises(SystemExit):
+                MODULE.parse_args(arguments)
+
+    def test_prebuilt_image_rejects_wrong_platform(self):
+        result = namedtuple("Result", "stdout")("linux/arm64\n")
+        with mock.patch.object(MODULE, "run", return_value=result):
+            with self.assertRaises(MODULE.DeploymentError):
+                MODULE.verify_prebuilt_image("local/cliproxyapi:test", "a" * 40)
+
+    def test_prebuilt_image_checks_embedded_commit(self):
+        result = namedtuple("Result", "stdout")("linux/amd64\n")
+        with mock.patch.object(MODULE, "run", return_value=result):
+            with mock.patch.object(MODULE, "verify_built_image") as verify:
+                MODULE.verify_prebuilt_image("local/cliproxyapi:test", "a" * 40)
+        verify.assert_called_once_with("local/cliproxyapi:test", "a" * 40)
+
+    def test_prebuilt_preflight_does_not_require_git_or_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = MODULE.Settings()
+            settings.project_dir = os.path.join(directory, "missing-source")
+            settings.config_file = os.path.join(directory, "config.yaml")
+            settings.auth_dir = os.path.join(directory, "auths")
+            settings.log_dir = os.path.join(directory, "logs")
+            with open(settings.config_file, "w") as handle:
+                handle.write("port: 3456\n")
+            os.mkdir(settings.auth_dir)
+            os.mkdir(settings.log_dir)
+            with mock.patch.object(MODULE.shutil, "which", side_effect=lambda x: None if x == "git" else x):
+                with mock.patch.object(MODULE, "run"):
+                    MODULE.preflight(settings, use_prebuilt=True)
+
+    def test_image_metadata_returns_embedded_version(self):
+        result = namedtuple("Result", "returncode stdout stderr")(
+            0, "CLIProxyAPI Version: local-v1, Commit: " + "a" * 40 + ", BuiltAt: now", ""
+        )
+        with mock.patch.object(MODULE, "run", return_value=result):
+            self.assertEqual(MODULE.verify_built_image("image", "a" * 40)["version"], "local-v1")
+
+    def test_prebuilt_healthy_manifest_uses_image_version_without_git(self):
+        self.run_prebuilt_transaction(False)
+
+    def test_prebuilt_unhealthy_switch_records_rollback(self):
+        self.run_prebuilt_transaction(True)
+
+    def run_prebuilt_transaction(self, fail_health):
+        commit = "a" * 40
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+            settings = MODULE.Settings()
+            settings.deploy_dir = directory
+            settings.release_dir = os.path.join(directory, "releases")
+            settings.backup_dir = os.path.join(directory, "backups")
+            settings.deployment_dir = os.path.join(directory, "deployments")
+            settings.current_manifest = os.path.join(settings.deployment_dir, "current.json")
+            settings.config_file = os.path.join(directory, "config.yaml")
+            settings.auth_dir = os.path.join(directory, "auths")
+            os.mkdir(settings.auth_dir)
+            with open(settings.config_file, "w") as handle:
+                handle.write("port: 3456\n")
+            old = {"Image": "sha256:old", "Config": {"Image": "old"}, "State": {"Status": "running"}}
+            new = {"Image": "sha256:new", "Config": {"Image": "local/cliproxyapi:" + commit}, "State": {"Status": "running"}}
+            for name in ("require_root", "preflight", "require_deploy_capacity", "validate_staged_compose", "activate_image", "rollback_to_image"):
+                stack.enter_context(mock.patch.object(MODULE, name))
+            stack.enter_context(mock.patch.object(MODULE, "resolve_commit", side_effect=AssertionError("Git must not be used")))
+            stack.enter_context(mock.patch.object(MODULE, "describe_commit", side_effect=AssertionError("Git must not be used")))
+            stack.enter_context(mock.patch.object(MODULE, "run", return_value=None))
+            stack.enter_context(mock.patch.object(MODULE, "verify_prebuilt_image", return_value={"version": "local-v1"}))
+            stack.enter_context(mock.patch.object(MODULE, "container_inspect", side_effect=[old, new]))
+            stack.enter_context(mock.patch.object(MODULE, "check_health", return_value=(not fail_health, "health", "HTTP 503" if fail_health else "HTTP 200")))
+            if fail_health:
+                with self.assertRaises(MODULE.DeploymentError):
+                    MODULE.deploy(settings, commit, False, use_prebuilt=True)
+            else:
+                MODULE.deploy(settings, commit, False, use_prebuilt=True)
+            manifest = MODULE.load_manifest(settings.current_manifest)
+            self.assertEqual(manifest["status"], "rolled_back" if fail_health else "healthy")
+            self.assertEqual(manifest["target_version"], "local-v1")
+            self.assertEqual(manifest["config_sha256"], MODULE.sha256_file(settings.config_file))
+            MODULE.verify_backup_archive(manifest["backup_archive"])
+
+    def test_prebuilt_failure_does_not_back_up_or_switch(self):
+        settings = MODULE.Settings()
+        commit = "a" * 40
+        with mock.patch.object(MODULE, "require_root"):
+            with mock.patch.object(MODULE, "preflight"):
+                with mock.patch.object(MODULE, "require_deploy_capacity"):
+                    with mock.patch.object(MODULE, "resolve_commit", return_value=commit):
+                        with mock.patch.object(
+                            MODULE, "verify_prebuilt_image",
+                            side_effect=MODULE.DeploymentError("missing image"),
+                            create=True,
+                        ):
+                            with mock.patch.object(MODULE, "run") as run:
+                                with mock.patch.object(MODULE, "create_persistent_backup") as backup:
+                                    with mock.patch.object(MODULE, "activate_image") as activate:
+                                        with self.assertRaises(MODULE.DeploymentError):
+                                            MODULE.deploy(settings, commit, False, use_prebuilt=True)
+        run.assert_not_called()
+        backup.assert_not_called()
+        activate.assert_not_called()
 
     def test_interruption_guard_translates_termination_signal(self):
         with self.assertRaises(MODULE.DeploymentInterrupted):

@@ -33,6 +33,11 @@ auths/*
 # Documentation
 docs/*
 !docs/management-api-v8.md
+!docs/operations/
+docs/operations/*
+!docs/operations/production-deployment.md
+!docs/operations/local-release-design.md
+!docs/operations/local-release-plan.md
 AGENTS.md
 CLAUDE.md
 GEMINI.md

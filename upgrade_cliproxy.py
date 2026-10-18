@@ -267,8 +267,9 @@ def compose_command(settings, compose_file=None, environment_file=None):
     ]
 
 
-def require_commands():
-    missing = [name for name in ("docker", "git") if shutil.which(name) is None]
+def require_commands(use_prebuilt=False):
+    commands = ("docker",) if use_prebuilt else ("docker", "git")
+    missing = [name for name in commands if shutil.which(name) is None]
     if missing:
         raise DeploymentError("Missing required commands: {0}".format(", ".join(missing)))
     run(["docker", "compose", "version"])
@@ -279,9 +280,9 @@ def require_root():
         raise DeploymentError("deploy and rollback must run as root")
 
 
-def preflight(settings):
-    require_commands()
-    if not os.path.isdir(os.path.join(settings.project_dir, ".git")):
+def preflight(settings, use_prebuilt=False):
+    require_commands(use_prebuilt=use_prebuilt)
+    if not use_prebuilt and not os.path.isdir(os.path.join(settings.project_dir, ".git")):
         raise DeploymentError("Source repository is missing: {0}".format(settings.project_dir))
     if not os.path.isfile(settings.config_file):
         raise DeploymentError("Configuration is missing: {0}".format(settings.config_file))
@@ -537,8 +538,9 @@ def verify_built_image(image_tag, commit):
             "--rm",
             "--network",
             "none",
+            "--entrypoint",
+            "/CLIProxyAPI/CLIProxyAPI",
             image_tag,
-            "./CLIProxyAPI",
             "-h",
         ],
         timeout=60,
@@ -549,8 +551,32 @@ def verify_built_image(image_tag, commit):
         raise DeploymentError(
             "Built image executable check failed ({0})".format(result.returncode)
         )
-    if "Commit: {0}".format(commit) not in output:
+    match = re.search(r"CLIProxyAPI Version: ([^,\r\n]+), Commit: ([^,\s]+), BuiltAt: ([^\r\n]+)", output)
+    if not match or match.group(2) != commit:
         raise DeploymentError("Built image does not report target commit {0}".format(commit))
+    return {"version": match.group(1), "commit": match.group(2), "built_at": match.group(3)}
+
+
+def verify_prebuilt_image(image_tag, commit):
+    """Verify an imported image matches the production platform and commit."""
+    result = run(
+        [
+            "docker",
+            "image",
+            "inspect",
+            image_tag,
+            "--format",
+            "{{.Os}}/{{.Architecture}}",
+        ]
+    )
+    platform = result.stdout.strip()
+    if platform != "linux/amd64":
+        raise DeploymentError(
+            "Prebuilt image platform mismatch: expected linux/amd64, got {0}".format(
+                platform
+            )
+        )
+    return verify_built_image(image_tag, commit)
 
 
 def validate_active_container(summary, expected_image):
@@ -605,16 +631,22 @@ def rollback_to_image(settings, image_tag, compose_content):
     print("Rollback health check passed: {0}".format(health_url))
 
 
-def deploy(settings, git_ref, pull_base):
+def deploy(settings, git_ref, pull_base, use_prebuilt=False):
     require_root()
-    preflight(settings)
+    preflight(settings, use_prebuilt=use_prebuilt)
     require_deploy_capacity(settings)
-    if not settings.skip_fetch:
+    if use_prebuilt and not re.match(r"^[0-9a-f]{40}$", git_ref or ""):
+        raise DeploymentError(
+            "Prebuilt deployment requires an exact 40-character lowercase commit"
+        )
+    if not use_prebuilt and not settings.skip_fetch:
         run(["git", "fetch", "--prune", "origin"], cwd=settings.project_dir)
-    commit = resolve_commit(settings, git_ref)
+    commit = git_ref if use_prebuilt else resolve_commit(settings, git_ref)
     short_commit = commit[:12]
     deployment_id = "{0}-{1}".format(utc_timestamp(), short_commit)
     image_tag = "{0}:{1}".format(settings.image_repository, commit)
+    if use_prebuilt:
+        image_metadata = verify_prebuilt_image(image_tag, commit)
     current = container_inspect(settings)
     current_summary = safe_container_summary(current)
     previous_image_id = current_summary.get("image_id")
@@ -626,12 +658,17 @@ def deploy(settings, git_ref, pull_base):
         run(["docker", "tag", previous_image_id, previous_image_tag])
 
     archive_path = create_persistent_backup(settings, deployment_id)
-    release_path, source_path = create_release_worktree(
-        settings, deployment_id, commit
-    )
-    if settings.build_apt_workaround:
-        apply_apt_transport_workaround(source_path)
-    version = describe_commit(settings, commit)
+    if use_prebuilt:
+        release_path = os.path.join(settings.release_dir, deployment_id)
+        os.makedirs(release_path, mode=0o755)
+        source_path = None
+    else:
+        release_path, source_path = create_release_worktree(
+            settings, deployment_id, commit
+        )
+        if settings.build_apt_workaround:
+            apply_apt_transport_workaround(source_path)
+    version = image_metadata["version"] if use_prebuilt else describe_commit(settings, commit)
     compose_content = render_compose(settings)
     validate_staged_compose(settings, release_path, image_tag)
 
@@ -639,7 +676,8 @@ def deploy(settings, git_ref, pull_base):
     manifest = {
         "deployment_id": deployment_id,
         "created_at": utc_iso_timestamp(),
-        "status": "building",
+        "status": "prebuilt_verified" if use_prebuilt else "building",
+        "build_mode": "prebuilt" if use_prebuilt else "server",
         "git_ref": git_ref,
         "target_commit": commit,
         "target_version": version,
@@ -654,39 +692,44 @@ def deploy(settings, git_ref, pull_base):
     }
     atomic_write_json(manifest_path, manifest)
 
-    build_command = ["docker", "build"]
-    if settings.build_network:
-        build_command.extend(["--network", settings.build_network])
-    if settings.build_http_proxy:
+    build_command = None
+    if not use_prebuilt:
+        build_command = ["docker", "build"]
+        if settings.build_network:
+            build_command.extend(["--network", settings.build_network])
+        if settings.build_http_proxy:
+            build_command.extend(
+                [
+                    "--build-arg",
+                    "HTTP_PROXY={0}".format(settings.build_http_proxy),
+                    "--build-arg",
+                    "HTTPS_PROXY={0}".format(settings.build_http_proxy),
+                ]
+            )
+        if pull_base:
+            build_command.append("--pull")
         build_command.extend(
             [
                 "--build-arg",
-                "HTTP_PROXY={0}".format(settings.build_http_proxy),
+                "VERSION={0}".format(version),
                 "--build-arg",
-                "HTTPS_PROXY={0}".format(settings.build_http_proxy),
+                "COMMIT={0}".format(commit),
+                "--build-arg",
+                "BUILD_DATE={0}".format(utc_iso_timestamp()),
+                "--tag",
+                image_tag,
+                source_path,
             ]
         )
-    if pull_base:
-        build_command.append("--pull")
-    build_command.extend(
-        [
-            "--build-arg",
-            "VERSION={0}".format(version),
-            "--build-arg",
-            "COMMIT={0}".format(commit),
-            "--build-arg",
-            "BUILD_DATE={0}".format(utc_iso_timestamp()),
-            "--tag",
-            image_tag,
-            source_path,
-        ]
-    )
 
     switch_started = False
     try:
-        print("Building {0} from {1}".format(image_tag, commit))
-        run(build_command, timeout=BUILD_TIMEOUT_SECONDS)
-        verify_built_image(image_tag, commit)
+        if use_prebuilt:
+            print("Using prebuilt {0} from {1}".format(image_tag, commit))
+        else:
+            print("Building {0} from {1}".format(image_tag, commit))
+            run(build_command, timeout=BUILD_TIMEOUT_SECONDS)
+            verify_built_image(image_tag, commit)
         manifest["status"] = "switching"
         atomic_write_json(manifest_path, manifest)
 
@@ -746,7 +789,7 @@ def load_manifest(path):
 
 def rollback(settings, manifest_path):
     require_root()
-    preflight(settings)
+    preflight(settings, use_prebuilt=True)
     selected_path = manifest_path or settings.current_manifest
     if not os.path.isfile(selected_path):
         raise DeploymentError("Deployment manifest is missing: {0}".format(selected_path))
@@ -781,6 +824,11 @@ def parse_args(argv):
     deploy_parser.add_argument(
         "--pull-base", action="store_true", help="Refresh mutable Docker base tags"
     )
+    deploy_parser.add_argument(
+        "--use-prebuilt",
+        action="store_true",
+        help="Use an already imported image for an exact commit",
+    )
     deploy_parser.add_argument("--yes", action="store_true", help="Confirm production mutation")
 
     rollback_parser = subparsers.add_parser("rollback", help="Restore the previous image")
@@ -793,6 +841,11 @@ def parse_args(argv):
         parser.exit(2)
     if args.command in ("deploy", "rollback") and not args.yes:
         parser.error("{0} requires --yes".format(args.command))
+    if args.command == "deploy" and args.use_prebuilt:
+        if not re.match(r"^[0-9a-f]{40}$", args.ref or ""):
+            parser.error("--use-prebuilt requires an exact 40-character lowercase commit")
+        if args.pull_base:
+            parser.error("--use-prebuilt cannot be combined with --pull-base")
     return args
 
 
@@ -808,7 +861,7 @@ def main(argv=None):
             require_root()
             with DeploymentLock(settings):
                 with DeploymentInterruptionGuard():
-                    deploy(settings, args.ref, args.pull_base)
+                    deploy(settings, args.ref, args.pull_base, args.use_prebuilt)
         elif args.command == "rollback":
             require_root()
             with DeploymentLock(settings):
