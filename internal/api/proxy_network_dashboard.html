@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>代理网络 | CLIProxyAPI</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1111;--panel:#111c1b;--panel2:#162321;--edge:#273c38;--text:#ecf4e9;--muted:#93aaa1;--accent:#b8e86b;--cyan:#87d6cc;--warn:#f1bd79;--red:#e79683;--mono:ui-monospace,SFMono-Regular,Menlo,monospace;--body:"PingFang SC","Microsoft YaHei",sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 var(--body)}button,input,select{font:inherit}button,select{cursor:pointer}button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.shell{max-width:1500px;margin:auto;padding:28px 38px 70px}.mast{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--edge);padding-bottom:20px;gap:16px}.brand{display:flex;align-items:center;gap:13px}.brandmark{display:grid;place-items:center;width:42px;height:42px;background:var(--accent);color:#102018;font:800 20px var(--mono);border-radius:12px}.brand h1{font-size:17px;letter-spacing:.04em;margin:0}.eyebrow{font:10px var(--mono);letter-spacing:.18em;color:var(--muted);text-transform:uppercase}.mast-right{display:flex;align-items:center;gap:18px}.link{color:var(--muted);text-decoration:none}.link:hover{color:var(--text)}.status{font:11px var(--mono);color:var(--muted);display:flex;align-items:center;gap:8px}.dot{width:7px;height:7px;border-radius:50%;background:#5d706a}.dot.on{background:var(--accent);box-shadow:0 0 12px #b8e866}.dot.bad{background:var(--red)}
+.hero{display:flex;justify-content:space-between;align-items:end;gap:24px;padding:38px 0 30px}.hero h2{font-size:clamp(28px,3.2vw,46px);font-weight:600;letter-spacing:-.035em;margin:8px 0}.hero p{color:var(--muted);margin:0;max-width:690px}.hero-stat{font:12px var(--mono);color:var(--muted);text-align:right}.hero-stat strong{display:block;color:var(--accent);font-size:33px;font-weight:500}.notice{border:1px solid #5b4934;border-radius:10px;padding:11px 15px;color:#dfbd93;background:#271f18;font-size:12px;margin-bottom:22px}.notice strong{color:#ffd6a1}
+.grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(330px,.8fr);gap:20px;align-items:start}.panel{background:var(--panel);border:1px solid var(--edge);border-radius:17px;overflow:hidden}.panel-head{display:flex;align-items:start;justify-content:space-between;gap:16px;padding:22px 22px 18px}.panel-head h3{font-size:19px;margin:4px 0 0}.subtle{font-size:12px;color:var(--muted)}.toolbar{display:flex;gap:9px;align-items:center;flex-wrap:wrap;padding:0 22px 18px}.input,select{color:var(--text);background:#0c1715;border:1px solid var(--edge);border-radius:9px;padding:10px 12px}.input{min-width:0}.search{flex:1;min-width:145px}.button{border:1px solid var(--edge);color:var(--text);background:#1b2d29;padding:9px 13px;border-radius:9px;font-size:12px;font-weight:600}.button:hover:not(:disabled){border-color:#92bca4;background:#263e36}.button.primary{background:var(--accent);border-color:var(--accent);color:#102016}.button.primary:hover:not(:disabled){background:#d3f695}.button:disabled{opacity:.45;cursor:not-allowed}.button.small{padding:6px 9px;font-size:11px}.groups{border-top:1px solid var(--edge)}details.group{border-bottom:1px solid var(--edge)}details.group:last-child{border-bottom:0}summary{list-style:none;cursor:pointer;padding:17px 22px;display:flex;justify-content:space-between;gap:16px;align-items:center}summary::-webkit-details-marker{display:none}summary:hover{background:#172723}.group-name{font-weight:600;font-size:14px}.group-meta{color:var(--muted);font:10px var(--mono);margin-top:4px}.current{color:var(--accent);font-size:12px;max-width:43%;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.current:after{content:'  ▾';color:var(--muted)}.nodes{padding:0 22px 18px}.group-actions{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;color:var(--muted);font-size:11px}.node{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:9px 0;border-top:1px solid #22342f}.node-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.node-name.active{color:var(--accent)}.latency{color:var(--muted);font:11px var(--mono);min-width:58px;text-align:right}.latency.good{color:var(--cyan)}.latency.fail{color:var(--red)}.node-actions{display:flex;gap:6px}.empty{padding:30px 22px;color:var(--muted)}
+.diagnostics{padding:0 22px 22px}.select-label{display:block;color:var(--muted);font-size:12px;margin:0 0 8px}.select-row{display:flex;gap:8px}.select-row select{flex:1;min-width:0}.result-intro{color:var(--muted);font-size:12px;margin:15px 0 18px}.result{border-top:1px solid var(--edge);padding:13px 0}.result-top{display:flex;justify-content:space-between;gap:10px;color:var(--muted);font-size:11px}.result-value{font-size:16px;margin:4px 0 1px;overflow-wrap:anywhere}.result-detail{color:var(--muted);font-size:11px;overflow-wrap:anywhere}.result-value.error{color:var(--red)}.footnote{font-size:11px;color:var(--muted);line-height:1.7;margin:16px 0 0}.toast{min-height:21px;color:var(--warn);font-size:12px;margin:10px 22px 0}.hidden{display:none!important}
+.login-wrap{max-width:480px;margin:80px auto}.login-card{background:var(--panel);border:1px solid var(--edge);border-radius:18px;padding:28px}.login-card h2{font-size:28px;margin:8px 0}.login-card p{color:var(--muted);margin:0 0 24px}.login-card label{display:block;margin-bottom:8px;color:var(--muted);font-size:12px}.login-card input{width:100%;margin-bottom:14px}.login-card button{width:100%;padding:12px}.login-error{min-height:20px;margin-top:12px;color:var(--red);font-size:12px}.login-help{color:var(--muted);font-size:11px;line-height:1.7;margin-top:18px}.login-help a{color:var(--cyan)}
+@media(max-width:900px){.grid{grid-template-columns:1fr}.hero{align-items:start}.hero-stat{display:none}}@media(max-width:580px){.shell{padding:20px 16px 50px}.mast-right{gap:10px}.mast-right .link{display:none}.hero{padding:30px 0 22px}.panel-head{padding:18px}.toolbar,.nodes{padding-left:18px;padding-right:18px}summary{padding-left:18px;padding-right:18px}.diagnostics{padding-left:18px;padding-right:18px}.node{gap:5px}.latency{min-width:46px}.login-wrap{margin:45px auto}}
+</style>
+</head>
+<body>
+<div class="shell">
+<header class="mast"><div class="brand"><div class="brandmark">↗</div><div><div class="eyebrow">CLIProxyAPI / NETWORK</div><h1>代理网络管理</h1></div></div><div class="mast-right"><a class="link" href="/management.html">CLIProxyAPI 管理 ↗</a><div class="status"><span id="status-dot" class="dot"></span><span id="status-text">未连接</span></div><button id="logout" class="button small hidden" type="button">退出</button></div></header>
+<section id="login" class="login-wrap"><div class="login-card"><div class="eyebrow">MANAGEMENT ACCESS</div><h2>连接到控制台</h2><p>使用现有 CLIProxyAPI 管理密钥，管理服务器的代理网络。</p><form id="login-form"><label for="management-key">管理密钥</label><input class="input" type="password" id="management-key" autocomplete="current-password" required placeholder="输入现有管理密钥"><button class="button primary" type="submit">连接控制台 →</button><div id="login-error" class="login-error" role="status"></div></form><div class="login-help">密钥仅保存在当前页面的内存中，关闭或刷新页面后需要重新输入。当前使用 HTTP，请仅在可信网络中访问。<br><a href="/management.html">打开原有管理页面</a></div></div></section>
+<main id="dashboard" class="hidden"><div class="hero"><div><div class="eyebrow">NETWORK OPERATIONS / CONTROL CENTER</div><h2>让每一条线路<br>都清晰可见。</h2><p>查看分组与当前出口，按需测试延迟，或沿指定服务端口检查网络。切换仅作用于你选择的代理组。</p></div><div class="hero-stat"><span>PROXY GROUPS</span><strong id="group-count">—</strong><span id="updated">尚未刷新</span></div></div>
+<div class="notice"><strong>HTTP 连接：</strong>管理密钥和控制操作不会被加密，请只在可信网络中使用。延迟与连通性不代表账号或模型可用。</div>
+<div class="grid"><section class="panel"><div class="panel-head"><div><div class="eyebrow">01 / ROUTING</div><h3>代理分组</h3><div class="subtle">展开分组，查看当前节点并执行操作</div></div><button id="refresh" class="button" type="button">↻ 刷新</button></div><div class="toolbar"><input id="filter" class="input search" type="search" placeholder="搜索分组或节点"><span id="groups-caption" class="subtle">等待数据</span></div><div id="message" class="toast" role="status"></div><div id="groups" class="groups"></div></section>
+<section class="panel"><div class="panel-head"><div><div class="eyebrow">02 / DIAGNOSTICS</div><h3>出口与连通性</h3><div class="subtle">从服务器的指定端口发起检测</div></div></div><div class="diagnostics"><label class="select-label" for="route">检测路径</label><div class="select-row"><select id="route"></select><button id="diagnose" class="button primary" type="button">开始检测</button></div><p class="result-intro">检测会向第三方服务发送该路径的出口 IP。不会改变当前节点。</p><div id="results"><div class="empty">选择路径后开始检测。</div></div><p class="footnote">IP 与归属地来源：ipwho.is；Cloudflare 出口来源：Cloudflare Trace。ChatGPT / OpenAI 显示未登录请求的 HTTP 状态，不推断账号、风控或模型可用性。</p></div></section></div></main>
+</div>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+let key = '', proxies = {}, groups = [], refreshing = false, timer = null;
+const el = (tag, className, value) => { const n = document.createElement(tag); if (className) n.className = className; if (value !== undefined) n.textContent = String(value); return n; };
+function setStatus(text, state) { $('status-text').textContent = text; $('status-dot').className = 'dot' + (state ? ' ' + state : ''); }
+function notify(text) { $('message').textContent = text; }
+async function call(method, url, options = {}) {
+  const body = {method, url, proxy_url: options.proxy || 'direct'};
+  if (options.data !== undefined) { body.data = JSON.stringify(options.data); body.header = {'Content-Type':'application/json'}; }
+  const response = await fetch('/v8/management/requests/api-call', {method:'POST', headers:{'Authorization':'Bearer ' + key,'Content-Type':'application/json'}, body:JSON.stringify(body), cache:'no-store'});
+  if (response.status === 401 || response.status === 403) throw new Error('管理密钥无效或当前客户端不允许远程管理');
+  if (!response.ok) throw new Error('管理接口请求失败（HTTP ' + response.status + '）');
+  const result = await response.json();
+  if (!result || typeof result.status_code !== 'number') throw new Error('管理接口返回格式异常');
+  return result;
+}
+function expectOK(result) { if (result.status_code < 200 || result.status_code >= 300) throw new Error('目标返回 HTTP ' + result.status_code); return result.body; }
+function clock() { return new Date().toLocaleTimeString('zh-CN', {hour12:false}); }
+async function refresh(showError = true) {
+  if (refreshing) return;
+  refreshing = true; $('refresh').disabled = true;
+  try {
+    const [v, p] = await Promise.all([call('GET','http://127.0.0.1:9090/version'),call('GET','http://127.0.0.1:9090/proxies')]);
+    const version = JSON.parse(expectOK(v)); const data = JSON.parse(expectOK(p));
+    if (!data.proxies || typeof data.proxies !== 'object') throw new Error('Mihomo 返回的代理列表无效');
+    proxies = data.proxies;
+    groups = Object.entries(proxies).filter(([,p]) => p && Array.isArray(p.all) && ['Selector','URLTest','Fallback','LoadBalance'].includes(p.type)).map(([name,p]) => ({name,...p}));
+    groups.sort((a,b) => rank(a.name)-rank(b.name) || a.name.localeCompare(b.name,'zh-CN'));
+    $('group-count').textContent = groups.length; $('updated').textContent = '更新于 ' + clock();
+    setStatus('Mihomo ' + (version.version || '在线'), 'on'); notify(''); renderGroups(); renderRoutes();
+  } catch (e) { setStatus('连接异常', 'bad'); if (showError) notify(e.message || '连接失败'); throw e; }
+  finally { refreshing = false; $('refresh').disabled = false; }
+}
+function rank(name) { return name.includes('AI') ? 0 : name.startsWith('cpa-port-') ? 1 : 2; }
+function delayInfo(name) { const item = proxies[name] || {}; const hist = Array.isArray(item.history) ? item.history : []; const last = hist.length ? hist[hist.length-1] : null; return last && Number(last.delay) > 0 ? Number(last.delay) : null; }
+function renderGroups() {
+  const box = $('groups'), query = $('filter').value.trim().toLowerCase();
+  const opened = new Set(Array.from(box.querySelectorAll('details[open]')).map(d => d.dataset.group));
+  box.replaceChildren();
+  const matching = groups.filter(g => !query || g.name.toLowerCase().includes(query) || g.all.some(n => String(n).toLowerCase().includes(query)));
+  $('groups-caption').textContent = '显示 ' + matching.length + ' / ' + groups.length + ' 组';
+  if (!matching.length) { box.append(el('div','empty','没有匹配的代理组。')); return; }
+  for (const group of matching) {
+    const details = el('details','group'); details.dataset.group = group.name; details.open = opened.has(group.name);
+    const summary = el('summary'); const left = el('div'); left.append(el('div','group-name',group.name),el('div','group-meta',group.type.toUpperCase() + '  /  ' + group.all.length + ' NODES'));
+    summary.append(left,el('div','current',group.now || '未选择')); details.append(summary);
+    const inner = el('div','nodes'); const actions = el('div','group-actions');
+    actions.append(el('span','',group.type === 'Selector' ? '选择节点会立即影响此组的流量' : '自动分组：查看节点和延迟'));
+    const testAll = el('button','button small','测试本组'); testAll.type='button'; testAll.addEventListener('click', () => testGroup(group, testAll)); actions.append(testAll); inner.append(actions);
+    for (const name of group.all) {
+      if (query && !group.name.toLowerCase().includes(query) && !String(name).toLowerCase().includes(query)) continue;
+      const row = el('div','node'); const label = el('div','node-name' + (name === group.now ? ' active' : ''),(name === group.now ? '●  ' : '') + name);
+      const ms = delayInfo(name); const latency = el('span','latency' + (ms ? ' good' : ''),ms ? ms + ' ms' : '未测试'); latency.dataset.node = name;
+      const buttons = el('div','node-actions'); const test = el('button','button small','测速'); test.type='button'; test.addEventListener('click',() => testNode(name,test)); buttons.append(test);
+      if (group.type === 'Selector' && name !== group.now) { const select = el('button','button small','切换'); select.type='button'; select.addEventListener('click',() => switchNode(group.name,name,select)); buttons.append(select); }
+      row.append(label,latency,buttons); inner.append(row);
+    }
+    details.append(inner); box.append(details);
+  }
+}
+async function testNode(name, button) {
+  button.disabled = true; const values = Array.from(document.querySelectorAll('.latency')).filter(x => x.dataset.node === name);
+  values.forEach(x => { x.textContent='测试中'; x.className='latency'; });
+  try {
+    const endpoint = 'http://127.0.0.1:9090/proxies/' + encodeURIComponent(name) + '/delay?timeout=5000&url=' + encodeURIComponent('https://www.gstatic.com/generate_204');
+    const result = JSON.parse(expectOK(await call('GET',endpoint))); const delay = Number(result.delay);
+    if (!(delay > 0)) throw new Error('无延迟数据');
+    values.forEach(x => { x.textContent=delay+' ms'; x.className='latency good'; });
+  } catch (e) { values.forEach(x => { x.textContent='失败'; x.className='latency fail'; }); }
+  finally { button.disabled = false; }
+}
+async function testGroup(group, button) {
+  const details = Array.from(document.querySelectorAll('details.group')).find(d => d.dataset.group === group.name); if (!details) return;
+  const tests = Array.from(details.querySelectorAll('.node-actions button:first-child')); button.disabled = true; button.textContent='测试中…';
+  let next = 0; async function worker(){ while(next < tests.length){ const b = tests[next++]; const row = b.closest('.node'); await testNode(row.querySelector('.latency').dataset.node,b); } }
+  try { await Promise.all(Array.from({length:Math.min(4,tests.length)},worker)); } finally { button.disabled=false; button.textContent='测试本组'; }
+}
+async function switchNode(group, name, button) {
+  if (!window.confirm('将「' + group + '」切换到「' + name + '」？\n使用该代理组的流量会受到影响。')) return;
+  button.disabled = true;
+  try { expectOK(await call('PUT','http://127.0.0.1:9090/proxies/'+encodeURIComponent(group),{data:{name}})); await refresh(); notify('已切换「' + group + '」'); }
+  catch(e) { notify('切换失败：' + (e.message || '未知错误')); button.disabled=false; }
+}
+function renderRoutes() {
+  const select=$('route'), old=select.value; select.replaceChildren();
+  for (let port=7893;port<=7900;port++) { const g=proxies['cpa-port-'+port]; if (!g) continue; const opt=el('option','',port+' · '+(g.now || '未选择')); opt.value=String(port); select.append(opt); }
+  if (Array.from(select.options).some(o=>o.value===old)) select.value=old;
+  $('diagnose').disabled = !select.options.length;
+}
+function resultRow(title, value, detail, error) {
+  const box=el('div','result'), top=el('div','result-top'); top.append(el('span','',title),el('span','',clock())); box.append(top,el('div','result-value'+(error?' error':''),value),el('div','result-detail',detail)); return box;
+}
+async function diagnostic(label, fn) { try { const [value,detail]=await fn(); return resultRow(label,value,detail,false); } catch(e) { return resultRow(label,'检测失败',e.message || '网络或服务不可用',true); } }
+async function diagnose() {
+  const port=Number($('route').value); if (!Number.isInteger(port)||port<7893||port>7900) return;
+  const proxy='http://127.0.0.1:'+port; $('diagnose').disabled=true; $('diagnose').textContent='检测中…';
+  const result=$('results'); result.replaceChildren(el('div','empty','正在从服务器请求各检测服务…'));
+  try {
+    const tasks = [
+      diagnostic('公网出口 / IPWHO.IS',async()=>{const d=JSON.parse(expectOK(await call('GET','https://ipwho.is/',{proxy}))); if(d.success===false||!d.ip) throw new Error(d.message||'IP 信息不可用'); const c=d.connection||{}; return [d.ip,[d.country,d.region,d.city,c.asn?'AS'+c.asn:'',c.org||c.isp].filter(Boolean).join(' · ')||'归属地信息不可用'];}),
+      diagnostic('CLOUDFLARE 出口',async()=>{const text=expectOK(await call('GET','https://www.cloudflare.com/cdn-cgi/trace',{proxy})); const fields={}; for(const line of text.split('\n')){const i=line.indexOf('=');if(i>0)fields[line.slice(0,i)]=line.slice(i+1);} if(!fields.ip)throw new Error('未返回出口 IP');return [fields.ip,['地区 '+(fields.loc||'未知'),'节点 '+(fields.colo||'未知')].join(' · ')];}),
+      diagnostic('CHATGPT 连通性',async()=>{const r=await call('GET','https://chatgpt.com/',{proxy});return ['HTTP '+r.status_code,'仅表示该路径收到的 HTTP 响应；不是账号可用性检测'];}),
+      diagnostic('OPENAI API 连通性',async()=>{const r=await call('GET','https://api.openai.com/v1/models',{proxy});return ['HTTP '+r.status_code,'未携带账号或 API 密钥；401 等状态可能正常'];})
+    ];
+    result.replaceChildren(...await Promise.all(tasks));
+  } finally { $('diagnose').disabled=false; $('diagnose').textContent='开始检测'; }
+}
+$('login-form').addEventListener('submit',async e=>{e.preventDefault(); key=$('management-key').value.trim(); $('login-error').textContent=''; if(!key)return; const button=e.submitter; if(button)button.disabled=true; try{expectOK(await call('GET','http://127.0.0.1:9090/version')); await refresh(false); $('management-key').value=''; $('login').classList.add('hidden'); $('dashboard').classList.remove('hidden'); $('logout').classList.remove('hidden'); timer=setInterval(()=>refresh(false).catch(()=>{}),30000);}catch(err){key=''; $('login-error').textContent=err.message||'连接失败';}finally{if(button)button.disabled=false;}});
+$('logout').addEventListener('click',()=>{key='';if(timer)clearInterval(timer);timer=null;proxies={};groups=[];$('groups').replaceChildren();$('dashboard').classList.add('hidden');$('logout').classList.add('hidden');$('login').classList.remove('hidden');setStatus('未连接','');});
+$('refresh').addEventListener('click',()=>refresh().catch(()=>{})); $('filter').addEventListener('input',renderGroups); $('diagnose').addEventListener('click',diagnose);
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+[Unit]
+Description=Restrict Mihomo controller to server loopback
+After=network-pre.target ufw.service
+Before=clash.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cliproxy-network-controller-guard start
+ExecStop=/usr/local/sbin/cliproxy-network-controller-guard stop
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
