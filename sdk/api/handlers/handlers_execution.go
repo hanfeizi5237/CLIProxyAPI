@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/clienterror"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
@@ -16,8 +17,6 @@ import (
 	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 	"golang.org/x/net/context"
 )
 
@@ -68,6 +67,7 @@ func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entr
 	if execOptions.Path != "" {
 		reqMeta[coreexecutor.RequestPathMetadataKey] = execOptions.Path
 	}
+	addCallerScopeMetadata(reqMeta, execOptions.CallerScope)
 	reqMeta[coreexecutor.RequestedModelMetadataKey] = originalRequestedModel
 	addAuthSelectionModelMetadata(reqMeta, execOptions.AuthSelectionModel)
 	addModelExecutionSourceMetadata(reqMeta, execOptions.InternalSource)
@@ -82,12 +82,16 @@ func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entr
 		Model:   normalizedModel,
 		Payload: payload,
 	}
+	originalRequest := rawJSON
+	if ctxOriginal := originalRequestFromContext(ctx); len(ctxOriginal) > 0 {
+		originalRequest = ctxOriginal
+	}
 	afterAuthCapture := &requestAfterAuthCapture{}
 	lifecycle := h.newRequestLifecycleTracker(ctx, entryProtocol, normalizedModel, originalRequestedModel, false, reqMeta, execOptions.SkipInterceptorPluginID)
 	opts := coreexecutor.Options{
 		Stream:                      false,
 		Alt:                         alt,
-		OriginalRequest:             rawJSON,
+		OriginalRequest:             originalRequest,
 		SourceFormat:                sdktranslator.FromString(entryProtocol),
 		ResponseFormat:              sdktranslator.FromString(responseProtocol),
 		Headers:                     modelExecutionHeaders(ctx, execOptions.Headers),
@@ -140,6 +144,7 @@ func (h *BaseAPIHandler) executeCountWithAuthManager(ctx context.Context, handle
 	}
 	providers = adjustExecutionProvidersForEntryProtocol(handlerType, providers)
 	reqMeta := requestExecutionMetadata(ctx)
+	addCallerScopeMetadata(reqMeta, execOptions.CallerScope)
 	reqMeta[coreexecutor.RequestedModelMetadataKey] = originalRequestedModel
 	addAuthSelectionModelMetadata(reqMeta, execOptions.AuthSelectionModel)
 	setReasoningEffortMetadata(reqMeta, handlerType, normalizedModel, rawJSON)
@@ -283,6 +288,7 @@ func (h *BaseAPIHandler) pluginExecutorRequest(ctx context.Context, entryProtoco
 	if execOptions.Path != "" {
 		reqMeta[coreexecutor.RequestPathMetadataKey] = execOptions.Path
 	}
+	addCallerScopeMetadata(reqMeta, execOptions.CallerScope)
 	reqMeta[coreexecutor.RequestedModelMetadataKey] = originalRequestedModel
 	addAuthSelectionModelMetadata(reqMeta, execOptions.AuthSelectionModel)
 	addModelExecutionSourceMetadata(reqMeta, execOptions.InternalSource)
@@ -293,11 +299,15 @@ func (h *BaseAPIHandler) pluginExecutorRequest(ctx context.Context, entryProtoco
 	if len(payload) == 0 {
 		payload = nil
 	}
+	originalRequest := rawJSON
+	if ctxOriginal := originalRequestFromContext(ctx); len(ctxOriginal) > 0 {
+		originalRequest = ctxOriginal
+	}
 	req := coreexecutor.Request{Model: modelName, Payload: payload}
 	opts := coreexecutor.Options{
 		Stream:                    stream,
 		Alt:                       alt,
-		OriginalRequest:           rawJSON,
+		OriginalRequest:           originalRequest,
 		SourceFormat:              sdktranslator.FromString(entryProtocol),
 		ResponseFormat:            sdktranslator.FromString(responseProtocol),
 		Headers:                   modelExecutionHeaders(ctx, execOptions.Headers),
@@ -326,13 +336,13 @@ func (h *BaseAPIHandler) applyRequestInterceptorsAfterPluginExecutorRoute(ctx co
 		RequestedModel: originalRequestedModel,
 		Stream:         opts.Stream,
 		Headers:        cloneHeader(opts.Headers),
-		Body:           cloneBytes(req.Payload),
+		Body:           req.Payload,
 		Metadata:       opts.Metadata,
 	}, requestID, skipPluginID)
 	opts.Headers = mergeRequestInterceptorHeaders(opts.Headers, resp.Headers, resp.ClearHeaders)
 	if len(resp.Body) > 0 {
-		req.Payload = cloneBytes(resp.Body)
-		opts.OriginalRequest = cloneBytes(resp.Body)
+		req.Payload = resp.Body
+		opts.OriginalRequest = resp.Body
 	}
 	if path := strings.TrimSpace(resp.Path); path != "" {
 		if opts.Metadata == nil {
@@ -465,17 +475,20 @@ func restoreClientVisibleModelInJSON(payload []byte, requestedModel string) []by
 	if !json.Valid(bytes.TrimSpace(payload)) {
 		return payload
 	}
-	out := payload
+	doc := ojson.NewDoc(payload)
+	changed := false
 	for _, path := range clientVisibleModelPaths() {
-		if !gjson.GetBytes(out, path).Exists() {
+		if !doc.Get(path).Exists() {
 			continue
 		}
-		updated, errSet := sjson.SetBytes(out, path, requestedModel)
-		if errSet == nil {
-			out = updated
+		if errSet := doc.Set(path, requestedModel); errSet == nil {
+			changed = true
 		}
 	}
-	return out
+	if !changed {
+		return payload
+	}
+	return doc.Bytes()
 }
 
 func clientVisibleModelPaths() []string {

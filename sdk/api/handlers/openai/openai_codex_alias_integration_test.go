@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
@@ -14,7 +15,6 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
-	"github.com/tidwall/gjson"
 )
 
 func TestOpenAIChatCompletions_CodexAPIKeyAliasRoutesUpstreamAndRestoresVisibleModel(t *testing.T) {
@@ -94,13 +94,13 @@ func TestOpenAIChatCompletions_CodexAPIKeyAliasRoutesUpstreamAndRestoresVisibleM
 	if upstreamAuthorization != "Bearer codex-key" {
 		t.Fatalf("upstream Authorization = %q, want Bearer codex-key", upstreamAuthorization)
 	}
-	if got := gjson.GetBytes(upstreamBody, "model").String(); got != "qwen3.6-plus" {
+	if got := ojson.GetBytesNoCopy(upstreamBody, "model").String(); got != "qwen3.6-plus" {
 		t.Fatalf("upstream model = %q, want qwen3.6-plus; body=%s", got, string(upstreamBody))
 	}
-	if got := gjson.Get(rec.Body.String(), "model").String(); got != "gpt-5.4" {
+	if got := ojson.Get(rec.Body.String(), "model").String(); got != "gpt-5.4" {
 		t.Fatalf("client visible model = %q, want gpt-5.4; body=%s", got, rec.Body.String())
 	}
-	if got := gjson.Get(rec.Body.String(), "choices.0.message.content").String(); got != "ok" {
+	if got := ojson.Get(rec.Body.String(), "choices.0.message.content").String(); got != "ok" {
 		t.Fatalf("client content = %q, want ok; body=%s", got, rec.Body.String())
 	}
 }

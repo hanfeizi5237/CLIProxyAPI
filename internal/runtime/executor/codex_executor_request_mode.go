@@ -5,12 +5,12 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
-	"github.com/tidwall/sjson"
 )
 
 // executeChatMode routes a Codex credential configured with request-mode=chat to the
@@ -65,9 +65,9 @@ func (e *CodexExecutor) resolveChatModeAliasRequest(req cliproxyexecutor.Request
 	if len(req.Payload) == 0 {
 		return req
 	}
-	updated, errSet := sjson.SetBytes(req.Payload, "model", resolved)
-	if errSet == nil {
-		req.Payload = updated
+	doc := ojson.NewDoc(req.Payload)
+	if errSet := doc.Set("model", resolved); errSet == nil {
+		req.Payload = doc.Bytes()
 	}
 	return req
 }

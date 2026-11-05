@@ -7,11 +7,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
-	"github.com/tidwall/gjson"
 )
 
 func TestCodexExecutorExecuteChatModeRejectsCodexDownstream(t *testing.T) {
@@ -58,13 +58,13 @@ func TestCodexExecutorChatModeRoutesOpenAIChatToChatCompletions(t *testing.T) {
 	if gotPath != "/v1/chat/completions" {
 		t.Fatalf("path = %q, want /v1/chat/completions", gotPath)
 	}
-	if !gjson.GetBytes(gotBody, "messages").Exists() {
+	if !ojson.GetBytesNoCopy(gotBody, "messages").Exists() {
 		t.Fatalf("expected chat messages in upstream body: %s", string(gotBody))
 	}
-	if gjson.GetBytes(gotBody, "input").Exists() {
+	if ojson.GetBytesNoCopy(gotBody, "input").Exists() {
 		t.Fatalf("unexpected responses input in upstream body: %s", string(gotBody))
 	}
-	if got := gjson.GetBytes(resp.Payload, "choices.0.message.content").String(); got != "ok" {
+	if got := ojson.GetBytesNoCopy(resp.Payload, "choices.0.message.content").String(); got != "ok" {
 		t.Fatalf("response content = %q, want ok; payload=%s", got, string(resp.Payload))
 	}
 }
@@ -108,7 +108,7 @@ func TestCodexExecutorChatModeResolvesConfigModelAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute error: %v", err)
 	}
-	if got := gjson.GetBytes(gotBody, "model").String(); got != "qwen3.6-plus" {
+	if got := ojson.GetBytesNoCopy(gotBody, "model").String(); got != "qwen3.6-plus" {
 		t.Fatalf("upstream model = %q, want qwen3.6-plus; body=%s", got, string(gotBody))
 	}
 }
@@ -145,13 +145,13 @@ func TestCodexExecutorChatModeRoutesResponsesToChatCompletions(t *testing.T) {
 	if gotPath != "/v1/chat/completions" {
 		t.Fatalf("path = %q, want /v1/chat/completions", gotPath)
 	}
-	if !gjson.GetBytes(gotBody, "messages").Exists() {
+	if !ojson.GetBytesNoCopy(gotBody, "messages").Exists() {
 		t.Fatalf("expected converted chat messages in upstream body: %s", string(gotBody))
 	}
-	if gjson.GetBytes(gotBody, "input").Exists() {
+	if ojson.GetBytesNoCopy(gotBody, "input").Exists() {
 		t.Fatalf("unexpected responses input in upstream body: %s", string(gotBody))
 	}
-	if got := gjson.GetBytes(resp.Payload, "object").String(); got != "response" {
+	if got := ojson.GetBytesNoCopy(resp.Payload, "object").String(); got != "response" {
 		t.Fatalf("response object = %q, want response; payload=%s", got, string(resp.Payload))
 	}
 }

@@ -6,12 +6,12 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
-	"github.com/tidwall/gjson"
 )
 
 type visibleModelExecutor struct {
@@ -232,7 +232,7 @@ func assertVisibleModelFields(t *testing.T, payload []byte, want string) {
 	t.Helper()
 
 	for _, path := range clientVisibleModelPaths() {
-		got := gjson.GetBytes(payload, path).String()
+		got := ojson.GetBytesNoCopy(payload, path).String()
 		if got != want {
 			t.Fatalf("%s = %q, want %q; payload=%s", path, got, want, string(payload))
 		}
