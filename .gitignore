@@ -38,6 +38,8 @@ docs/operations/*
 !docs/operations/production-deployment.md
 !docs/operations/local-release-design.md
 !docs/operations/local-release-plan.md
+!docs/websocket-tunnel.md
+!docs/websocket-tunnel_CN.md
 AGENTS.md
 CLAUDE.md
 GEMINI.md
